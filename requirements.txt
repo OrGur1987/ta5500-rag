@@ -1,0 +1,11 @@
+pypandoc_binary
+python-docx
+pandas
+pyarrow
+tokenizers
+pymupdf
+pyyaml
+pytest
+fastapi
+uvicorn
+httpx

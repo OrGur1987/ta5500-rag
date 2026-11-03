@@ -1,0 +1,41 @@
+name: ta5500-rag
+
+services:
+  embedder:
+    # pinned to the build the index parity was checked with; update it deliberately and rerun the evaluation
+    image: ghcr.io/ggml-org/llama.cpp:server@sha256:8ee4ec7ce58a921313d07390c6699af13aa5ec083f3cdf67e5f4155767047373
+    # the same bge-m3 GGUF as the index; downloaded into the volume on first start (about 1 GB)
+    command: ["-hf", "CompendiumLabs/bge-m3-gguf:F16", "--embeddings", "-b", "2048", "-ub", "2048",
+              "--host", "0.0.0.0", "--port", "8080"]
+    volumes:
+      - model-cache:/root/.cache
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"  # for checks from the host only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  service:
+    image: ${RAG_SERVICE_IMAGE:-ta5500-rag-service}  # the name of the built image; set RAG_SERVICE_IMAGE to tag it for a registry
+    build:
+      context: .
+      dockerfile: service/Dockerfile
+    environment:
+      RAG_EMBED_BASE_URL: http://embedder:8080/v1
+      RAG_API_KEY: ${RAG_API_KEY:-}
+      RAG_CORS_ORIGINS: ${RAG_CORS_ORIGINS:-}
+    volumes:
+      - ./bundle:/data:ro
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      embedder:
+        condition: service_healthy
+
+volumes:
+  model-cache:

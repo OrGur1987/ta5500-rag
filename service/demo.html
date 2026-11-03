@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>בדיקת חיפוש בתכנית תא/5500</title>
+<style>
+  :root { --line: #d0d7de; --muted: #57606a; --bg: #f6f8fa; --accent: #0969da; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; color: #1f2328; background: #fff; line-height: 1.5; }
+  header { padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--bg); display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 1.15rem; }
+  header a { color: var(--accent); font-size: .9rem; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 20px; padding: 20px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 14px; padding: 10px 12px; }
+  legend { font-weight: 600; padding: 0 6px; }
+  textarea, input[type=text], input[type=password] { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  textarea { min-height: 90px; resize: vertical; }
+  .list { max-height: 190px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; padding: 4px 8px; }
+  .list label { display: block; font-size: .92rem; cursor: pointer; }
+  .list label[hidden] { display: none; }
+  .list .cat { font-weight: 600; margin-top: 4px; }
+  .list .type { padding-inline-start: 18px; }
+  .hint { color: var(--muted); font-size: .85rem; margin: 4px 0 0; }
+  button { font: inherit; padding: 6px 16px; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .actions { display: flex; gap: 8px; align-items: center; }
+  .badge { display: inline-block; padding: 2px 12px; border-radius: 12px; font-weight: 600; color: #fff; }
+  .badge.high { background: #1a7f37; } .badge.medium { background: #bf8700; } .badge.low { background: #cf222e; }
+  .summary { border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; background: var(--bg); }
+  .summary div { margin: 2px 0; }
+  .warn { color: #9a6700; font-weight: 600; }
+  .error { color: #cf222e; font-weight: 600; }
+  .hit { border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; margin-bottom: 10px; }
+  .hit h3 { margin: 0 0 2px; font-size: 1rem; }
+  .meta { color: var(--muted); font-size: .85rem; }
+  .meta span + span::before { content: " · "; }
+  details > summary { cursor: pointer; color: var(--accent); margin-top: 6px; }
+  details.block { border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px 10px; margin-bottom: 12px; }
+  details.block > summary { font-weight: 600; margin: 4px 0 8px; }
+  .row { display: flex; gap: 8px; align-items: center; margin: 2px 0; }
+  button.mini { padding: 0 10px; font-size: .85rem; }
+  pre { white-space: pre-wrap; margin: 6px 0 0; font: inherit; background: var(--bg); padding: 8px 10px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>בדיקת חיפוש בתכנית תא/5500</h1>
+  <a href="/docs">תיעוד API (Swagger)</a>
+</header>
+<main>
+  <section>
+    <fieldset>
+      <legend>שאלה</legend>
+      <textarea id="question" placeholder="שאלה בעברית. אפשר להשאיר ריק כשנבחרו אזורים (גבול תכנית ללא שאלה)."></textarea>
+      <p class="hint">שליחה באמצעות <bdi>Ctrl+Enter</bdi></p>
+    </fieldset>
+    <fieldset>
+      <legend>אזורי תכנון ושורות בטבלה 5.4</legend>
+      <input type="text" id="placeFilter" placeholder="סינון הרשימה">
+      <div class="list" id="places"></div>
+      <p class="hint">בחירת תת-אזור (למשל <bdi>101ה</bdi>) או שורה (רחוב, סימבול) מצמצמת את האזור שנבחר לשורה זו; ללא אזור נבחרות השורות בכל האזורים. בחירת האזור עצמו כוללת את כולו.</p>
+    </fieldset>
+    <fieldset>
+      <legend>אזורי יעוד (פרק 3)</legend>
+      <input type="text" id="zoneFilter" placeholder="סינון הרשימה">
+      <div class="list" id="zones"></div>
+      <p class="hint">בחירת קטגוריה (למשל 3.3) כוללת את כל סוגיה.</p>
+    </fieldset>
+    <fieldset>
+      <legend>כותרות בתכנית (פרק או סעיף)</legend>
+      <input type="text" id="headings" placeholder="מספר או כותרת מלאה, מופרדים בפסיק, למשל 4.3">
+      <p class="hint">מחזיר את הסעיף עצמו; כותרת גדולה מוחזרת בחלקה, ורשימת הסעיפים שבתוכה מוצגת בקטע "תוכן נוסף שלא הוחזר".</p>
+    </fieldset>
+    <fieldset>
+      <legend>הגדרות</legend>
+      <label><input type="checkbox" id="withContext" checked> הצגת בלוק ההקשר שנשלח למודל</label>
+      <input type="password" id="apiKey" placeholder="מפתח API (רק אם הוגדר)" style="margin-top:8px" autocomplete="off">
+    </fieldset>
+    <div class="actions">
+      <button class="primary" id="go">חיפוש</button>
+      <button id="clear">ניקוי</button>
+      <span id="status" class="meta"></span>
+    </div>
+  </section>
+  <section id="result" aria-live="polite"></section>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const el = (tag, props = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else e.setAttribute(k, v);
+  }
+  kids.flat().forEach((k) => e.append(k));
+  return e;
+};
+const SOURCES = { filters: "מסננים", text: "זיהוי בגוף השאלה", none: "לא זוהו" };
+const ENTITY_GROUPS = { street: "רחובות ומרחבים עם הוראות מיוחדות", symbol: "סימבולים",
+  zone_type: "שורות לפי אזור יעוד", named: "שורות אחרות" };
+let titles = {};
+
+function headers() {
+  const h = { "Content-Type": "application/json" };
+  const key = $("#apiKey").value.trim();
+  if (key) h["X-API-Key"] = key;
+  return h;
+}
+
+function checkbox(value, label, cls, kind) {
+  return el("label", { class: cls }, el("input", { type: "checkbox", value, "data-kind": kind || "" }), " " + label);
+}
+
+function applyFilter(box, text) {
+  const q = text.trim().toLowerCase();
+  box.querySelectorAll("label").forEach((l) => { l.hidden = q && !l.textContent.toLowerCase().includes(q); });
+}
+
+async function loadLocations() {
+  const res = await fetch("/v1/locations", { headers: headers() });
+  if (!res.ok) { $("#status").textContent = res.status === 401 ? "נדרש מפתח API כדי לטעון את הרשימות" : "טעינת הרשימות נכשלה"; return; }
+  const loc = await res.json();
+  titles = Object.fromEntries([...loc.zone_types, ...loc.zone_categories].map((z) => [z.id, z.title]));
+  const places = loc.areas.flatMap((a) => [
+    checkbox(a.code, `${a.code} ${a.name}`, "", "areas"),
+    ...loc.subareas.filter((s) => s.area === a.code).map((s) => checkbox(s.code, `${s.code} ${s.name}`, "type", "areas"))]);
+  for (const [type, title] of Object.entries(ENTITY_GROUPS)) {  // sub-areas and whole-area rows are already listed under their areas
+    const items = loc.entities.filter((e) => e.type === type);
+    if (items.length) places.push(el("div", { class: "cat", text: title }));
+    items.forEach((e) => places.push(checkbox(e.code || e.label, `${e.label} (${e.areas.join(", ")})`, "type", "entities")));
+  }
+  $("#places").replaceChildren(...places);
+  const rows = [];
+  for (const c of loc.zone_categories) {
+    rows.push(checkbox(c.id, `${c.id} ${c.title} (כל הסוגים)`, "cat"));
+    loc.zone_types.filter((t) => t.category === c.id && t.id !== c.id)
+      .forEach((t) => rows.push(checkbox(t.id, `${t.id} ${t.title}`, "type")));
+  }
+  $("#zones").replaceChildren(...rows);
+  $("#status").textContent = "";
+}
+
+const selected = (box, kind) => [...box.querySelectorAll("input:checked")].filter((i) => !kind || i.dataset.kind === kind).map((i) => i.value);
+
+function pages(h) {
+  if (h.page_start == null) return "";
+  return h.page_start === h.page_end ? `עמוד ${h.page_start}` : `עמודים ${h.page_start}-${h.page_end}`;
+}
+
+function renderHit(h, i) {
+  const meta = el("div", { class: "meta" });
+  [pages(h), h.reason, `דמיון ${h.score.toFixed(3)}`, h.chunk_id].filter(Boolean).forEach((t) => meta.append(el("span", { text: t })));
+  if (h.followed_from) {
+    meta.append(el("span", { text: `בעקבות הפניה מ-${h.followed_from}` + (h.mandatory ? " (הפניה מחייבת)" : "") }));
+  }
+  const body = el("details", i < 2 ? { open: "" } : {}, el("summary", { text: "טקסט" }), el("pre", { text: h.text }));
+  return el("div", { class: "hit" }, el("h3", { text: `${i + 1}. ${h.citation}` }),
+    el("div", { class: "meta", text: h.heading_path.join(" > ") }), meta, body);
+}
+
+const LOC_LABELS = { source: "מקור הזיהוי", areas: "אזורי תכנון", subareas: "תתי-אזורים", zone_types: "אזורי יעוד",
+  entities: "שורות בטבלה", linked: "שורות שזוהו לפי דמיון", entities_not_found: "שורות שלא נמצאו", headings: "כותרות", headings_not_found: "כותרות שלא נמצאו",
+  areas_without_records: "אזורים ללא רשומה בטבלה 5.4" };
+
+function block(title, open, ...kids) {
+  return el("details", open ? { class: "block", open: "" } : { class: "block" }, el("summary", { text: title }), ...kids);
+}
+
+function renderLocation(loc) {
+  return el("div", {}, ...Object.entries(LOC_LABELS).map(([key, label]) => {
+    const v = loc[key];
+    return el("div", { text: `${label}: ${Array.isArray(v) ? (v.join(", ") || "-") : (SOURCES[v] || v)}` });
+  }));
+}
+
+function renderOmitted(o) {
+  const line = el("div", { class: "row" }, el("span", { text: `${o.citation} · ${o.tokens} אסימונים` }));
+  const box = el("div", {}, line);
+  const fetchText = el("button", { class: "mini", text: "הבאת הטקסט" });
+  fetchText.onclick = async () => {
+    const res = await fetch(`/v1/chunk?id=${encodeURIComponent(o.chunk_id)}`, { headers: headers() });
+    box.append(res.ok ? el("pre", { text: (await res.json()).text }) : el("p", { class: "error", text: "הבאת הקטע נכשלה." }));
+    fetchText.remove();
+  };
+  line.append(fetchText);
+  return box;
+}
+
+function render(data, ms) {
+  const loc = data.location;
+  const summary = el("div", { class: "summary" },
+    el("div", {}, el("span", { class: `badge ${data.band}`, text: data.band_label }),
+      ` דמיון מרבי ${data.top_score.toFixed(3)} · ${data.hits.length} תוצאות · ${ms} מילישניות`),
+    el("div", { text: `מיקום: ${SOURCES[loc.source] || loc.source}` }));
+  if (loc.areas.length) summary.append(el("div", { text: `אזורי תכנון: ${loc.areas.join(", ")}` }));
+  if (loc.zone_types.length) summary.append(el("div", { text: `אזורי יעוד: ${loc.zone_types.map((z) => titles[z] || z).join(", ")}` }));
+  if (loc.entities.length) summary.append(el("div", { text: `שורות בטבלה: ${loc.entities.join(", ")}` }));
+  if (loc.headings.length) summary.append(el("div", { text: `כותרות: ${loc.headings.join(", ")}` }));
+  for (const [key, text] of [["entities_not_found", "שורות שלא נמצאו בטבלה 5.4"], ["headings_not_found", "כותרות שלא נמצאו בתכנית"],
+    ["areas_without_records", "אזורי תכנון שאינם מופיעים בטבלה 5.4 (אין הוראות מיוחדות)"]]) {
+    if (loc[key].length) summary.append(el("div", { class: "warn", text: `${text}: ${loc[key].join(", ")}` }));
+  }
+  const out = [summary, block(`תוצאות (${data.hits.length})`, true, ...data.hits.map(renderHit))];
+  if (data.omitted.length) out.push(block(`קטעים שלא הוחזרו (${data.omitted.length})`, false, ...data.omitted.map(renderOmitted)));
+  out.push(block("המיקום והמסננים שזוהו", false, renderLocation(loc)));
+  if (data.context) {
+    const copy = el("button", { text: "העתקה" });
+    copy.onclick = () => navigator.clipboard.writeText(data.context);
+    out.push(block("בלוק ההקשר שנשלח למודל", false, copy, el("pre", { text: data.context })));
+  }
+  out.push(block("התגובה המלאה (JSON)", false, el("pre", { text: JSON.stringify(data, null, 2) })));
+  $("#result").replaceChildren(...out);
+}
+
+function showError(text) { $("#result").replaceChildren(el("p", { class: "error", text })); }
+
+async function search() {
+  const question = $("#question").value.trim();
+  const areas = selected($("#places"), "areas"), zones = selected($("#zones")), entities = selected($("#places"), "entities");
+  const headings = $("#headings").value.split(",").map((s) => s.trim()).filter(Boolean);
+  if (!question && !areas.length && !zones.length && !entities.length && !headings.length) {
+    showError("נדרשת שאלה או בחירה של אזורי תכנון, יעוד, שורות בטבלה או כותרות."); return;
+  }
+  const body = { question: question || null, areas: areas.length ? areas : null, zone_types: zones.length ? zones : null,
+    entities: entities.length ? entities : null, headings: headings.length ? headings : null, context: $("#withContext").checked };
+  $("#status").textContent = "מחפש...";
+  const t0 = performance.now();
+  try {
+    const res = await fetch("/v1/search", { method: "POST", headers: headers(), body: JSON.stringify(body) });
+    if (res.status === 401) showError("מפתח API חסר או שגוי.");
+    else if (res.status === 503) showError("שרת ההטבעות אינו זמין. יש לנסות שוב בעוד רגע.");
+    else if (!res.ok) showError(`שגיאה ${res.status}: ${(await res.json()).detail}`);
+    else render(await res.json(), Math.round(performance.now() - t0));
+  } catch (e) { showError("אין תקשורת עם השירות."); }
+  $("#status").textContent = "";
+}
+
+$("#go").onclick = search;
+$("#question").addEventListener("keydown", (e) => { if (e.ctrlKey && e.key === "Enter") search(); });
+$("#placeFilter").oninput = (e) => applyFilter($("#places"), e.target.value);
+$("#zoneFilter").oninput = (e) => applyFilter($("#zones"), e.target.value);
+$("#apiKey").onchange = loadLocations;
+$("#clear").onclick = () => {
+  $("#question").value = "";
+  $("#headings").value = "";
+  document.querySelectorAll("#places input, #zones input").forEach((i) => { i.checked = false; });
+  $("#result").replaceChildren();
+};
+loadLocations();
+</script>
+</body>
+</html>

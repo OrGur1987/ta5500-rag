@@ -1,0 +1,53 @@
+active: bge-m3-gguf-F16
+
+# key = model id as listed by the embedding server
+models:
+  bge-m3-gguf-F16:
+    tokenizer: BAAI/bge-m3  # Hugging Face tokenizer used to measure chunk sizes
+    dim: 1024
+    query_prefix: ""  # e5-style models need "query: " / "passage: "
+    doc_prefix: ""
+
+chunking:
+  min_tokens: 40  # chunks below this are merged with a neighbour
+  max_tokens: 500  # subtrees above this are split into their children
+
+server:
+  base_url: http://localhost:13305/api/v1
+  timeout_s: 3  # per embedding request; a normal one takes about 40 ms
+  retry_delay_s: 1  # one retry after a refused or reset connection (not after a timeout)
+  max_concurrent: 4  # simultaneous embedding requests from this process; the rest queue
+
+retrieval:
+  generic_question: מה ההוראות החלות על תכנית מפורטת באזורים אלו?  # used when only filters are given
+  clause_k: 5  # semantic hits among clauses
+  records_k: 3  # 5.4 records per planning area when no zone type narrows them
+  records_k_global: 2  # 5.4 records returned when no planning area is known
+  link_min: 0.68  # similarity at which a question is linked to a row name written in another form
+  link_margin: 0.03  # and the lead it needs over the next row name
+  zone_k: 2  # chunks taken from a zone-type section that is too large to return whole
+  zone_max_tokens: 1500  # a zone-type section up to this size is returned whole
+  sibling_max_tokens: 1500  # fragments of a split table pull in their section up to this size
+  expand_min: 0.55  # similarity needed to follow a non-mandatory reference
+  expand_step: 0.03  # the gate rises by this much per level, so attention fades with distance
+  expand_depth: 6  # backstop; the gate normally stops earlier
+  hub_in_degree: 5  # non-mandatory references are not followed out of chunks referenced this often
+  budget_tokens: 6000  # cap on text added through siblings and references
+  bands: {high: 0.65, medium: 0.58}  # top similarity at or above -> high / medium, else low
+
+labels:  # Hebrew wording for what the assistant sees; the data keeps the stable keys
+  band: {high: התאמה גבוהה, medium: התאמה בינונית, low: התאמה נמוכה}
+  via: {search: חיפוש סמנטי, location: אזור תכנון, zone: אזור יעוד, general: הוראות כלליות לקטגוריית היעוד, notes: הערות לטבלה 5.4, section: המשך הטבלה או הסעיף, heading: כותרת שצוינה בשאלה, ref: הפניה}
+  context:
+    band: רמת התאמה
+    low_note: ייתכן שהתכנית אינה כוללת מענה לשאלה
+    areas: אזורי תכנון
+    zones: אזורי יעוד
+    no_record: אזורי תכנון שאינם מופיעים בטבלה 5.4 (אין הוראות מיוחדות)
+    omitted: לא הוחזרו מטעמי גודל (ניתן להביא לפי מזהה)
+    entities_missing: ישויות שלא נמצאו בטבלה 5.4
+    page: עמוד
+    pages: עמודים
+    followed_from: בעקבות הפניה מ-
+    mandatory: הפניה מחייבת
+  citation: {section: סעיף, sections: סעיפים, chapter: פרק, table: טבלה 5.4, area: אזור תכנון, intro: פתיח התכנית, definition: הגדרת}
