@@ -113,8 +113,9 @@ def test_a_sub_area_filter_narrows_to_its_record_in_any_common_form(tmp_path, mo
     for value in ("703ה", "703 ה'", "703-ה", "‏703ה׳", "ה703"):
         loc = ret.locate("", [value], None)
         assert (loc["areas"], loc["subareas"]) == (["703"], ["703ה"])
-    hits = via(ret.search(areas=["703ה"], zone_types=[NEW_HUB]))  # the sub-area narrows before the zone type is matched
-    assert hits["5.4[2]"] == "location" and "5.4[1]" not in hits
+    hits = via(ret.search(areas=["703ה"], zone_types=[NEW_HUB]))  # the named sub-area record, plus the area's rows of the zone type
+    assert hits["5.4[2]"] == hits["5.4[1]"] == "location"
+    assert "5.4[1]" not in via(ret.search(areas=["703ה"]))  # without a zone type only the sub-area's own record
     assert "5.4[1]" in via(ret.search(areas=["703ה", "703"]))  # a plain code beside it asks for the whole area
     both = via(ret.search(areas=["703ה", "703ו"]))  # several sub-areas of one area each return their own record
     assert both["5.4[2]"] == both["5.4[8]"] == "location" and "5.4[1]" not in both

@@ -482,6 +482,21 @@ questions:
     gold: ["5.4[156]", "3.6.13", "4.4.2"]
     answer: שורת 703 ה' מהסינון, ובנוסף סעיף 3.6.13 (צירים ירוקים) וסעיף 4.4.2 (מרקם בנוי לשימור) מהשכבות המשניות
 
+  # a sub-area names its own record; the area's rows of the requested zone types come beside it, not instead of it
+  - id: f09
+    category: focus
+    question: מה ההוראות לעריכת תכנית מפורטת בתחום הזה?
+    filters: {areas: ["703ה"], zone_types: ["3.3.5"]}
+    gold: ["5.4[156]", "5.4[160]", "3.3.5"]
+    answer: שורת 703 ה' (אזור מעורב) וגם שורת מוקד תעסוקה חדש של אזור 703, וסעיף 3.3.5
+
+  - id: f10
+    category: focus
+    question: מה ההוראות לעריכת תכנית מפורטת בתחום הזה?
+    filters: {areas: ["703ה", "703ד"], zone_types: ["3.3.5", "3.4.1"]}
+    gold: ["5.4[155]", "5.4[156]", "5.4[160]", "3.3.5", "3.4.1"]
+    answer: שורות 703 ד' ו-703 ה' (אזור מעורב) ושורת מוקד תעסוקה חדש של אזור 703, וסעיפים 3.3.5 ו-3.4.1
+
   # --- no answer in the plan: the assistant should say so
   - id: n01
     category: no_answer

@@ -100,6 +100,7 @@ Mismatches to fix in the layers some day: the shifted codes 3617 and 3618 (a cla
 Notes from the checks:
 - `headings` returns the whole section when it is small. "שובר גלים" appears in three chunks (3.6.2, 3.6.6(ב) and table 5.4 record 92); a plain question search returns all three with a low match band (top score 0.40), while `zone_types: ["3.6.2"]` reaches 3.6.2 directly.
 - Backend changes made for this mapping (tests and the evaluation unchanged): zone types now cover the sub-sections of 3.2-3.12, including 3.6.2 (a title shorter than 4 letters is a type by id, not found in free text) and 3.8.2-3.8.10; merged sibling clauses are cited as a range (`4.7.1(ב)-(ג)`); the `headings` filter accepts clause ids (`4.7.1(ג)`).
+- Sub-areas and entities name rows; the area's rows of the requested zone types come beside them, not instead of them. With `areas: ["703ה"]` and `zone_types: ["3.3.5"]` the answer holds the 703ה record and the area-wide "מוקד תעסוקה חדש" row. This is why the UI sends a sub-area code without the plain area code.
 
 
 ## Secondary layers: `focus_notes`

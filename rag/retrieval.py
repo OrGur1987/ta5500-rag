@@ -487,11 +487,12 @@ class Retriever:
         return Result(ordered, loc, top, band, config.LABELS["band"][band], omitted)
 
     def _add_records(self, add, scores: pd.Series, loc: dict, ranked: bool = True) -> None:
-        """Table 5.4 records: per planning area those of the requested zone types, else the most similar ones.
+        """Table 5.4 records: per planning area the rows it names, those of the requested zone types, else the most similar ones.
 
-        Requested entities (`loc["entity_records"]`) narrow the area's records to their own rows, and are added
-        even when no area is given. `ranked` is False when there is no question, so similarity picks nothing: the
-        area's whole table stands in for records of the requested zone types.
+        Requested sub-areas and entities (`loc["entity_records"]`) name rows of an area; they are always returned,
+        and the area's rows of the requested zone types come beside them. Without named rows only the zone-type rows
+        are returned, else the most similar ones. Entity rows are added even when no area is given. `ranked` is False
+        when there is no question, so similarity picks nothing: the area's whole table stands in for the zone-type rows.
         """
         cfg = self.cfg
         forced = loc["entity_records"]
@@ -503,17 +504,19 @@ class Retriever:
                     add(cid, "search")
             return
         wanted = set(loc["zone_types"])
+        zone = self.chunks["zone"].fillna("").str.replace(r"[\s\"'׳״]", "", regex=True)
         for area in loc["areas"]:
             pool = self.plan_record & (self.chunks["area"] == area)
+            named = pool & pool.index.isin(forced)
             subs = [s for s in loc["subareas"] if s.startswith(area)]
-            if subs:  # the records of every requested sub-area, or the whole area when none of them has one
-                zone = self.chunks["zone"].fillna("").str.replace(r"[\s\"'׳״]", "", regex=True)
-                narrowed = pool & pd.concat([zone.str.startswith(s) for s in subs], axis=1).any(axis=1)
-                pool = narrowed if narrowed.any() else pool
-            narrowed = pool & pool.index.isin(forced)
-            pool = narrowed if narrowed.any() else pool
-            matched = [cid for cid in pool.index[pool] if self.record_zones.get(cid, set()) & wanted]
-            for cid in matched or (scores[pool].nlargest(cfg["records_k"]).index if ranked else pool.index[pool]):
+            if subs:
+                named |= pool & pd.concat([zone.str.startswith(s) for s in subs], axis=1).any(axis=1)
+            by_zone = [cid for cid in pool.index[pool] if self.record_zones.get(cid, set()) & wanted]
+            if named.any():
+                rows = [*named.index[named], *(cid for cid in by_zone if not named[cid])]
+            else:
+                rows = by_zone or (scores[pool].nlargest(cfg["records_k"]).index if ranked else pool.index[pool])
+            for cid in rows:
                 add(cid, "location")
         for cid in forced:  # entity rows outside the requested areas
             add(cid, "location")
