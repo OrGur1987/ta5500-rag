@@ -1,0 +1,15 @@
+# Example override: load the bge-m3 GGUF from a file downloaded by hand.
+# Use it when the container cannot reach HuggingFace (e.g. a corporate SSL proxy blocks it).
+#
+#   1. Download bge-m3-f16.gguf (about 1.1 GB, CompendiumLabs/bge-m3-gguf, F16) in a browser.
+#   2. Put it in a folder of your choice and set that folder below.
+#   3. cp docker-compose.override.example.yml docker-compose.override.yml
+#   4. docker compose up -d
+#
+# The file name is case-sensitive inside the Linux container.
+services:
+  embedder:
+    command: ["-m", "/models/bge-m3-f16.gguf", "--embeddings", "-b", "2048", "-ub", "2048",
+              "--host", "0.0.0.0", "--port", "8080"]
+    volumes:
+      - <path-to-models-folder>:/models:ro

@@ -139,3 +139,8 @@ cython_debug/
 local_resources/
 
 .eval_cache.pkl
+
+# local compose override (machine-specific paths)
+docker-compose.override.yml
+node_modules/
+*.gguf

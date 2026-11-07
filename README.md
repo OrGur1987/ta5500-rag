@@ -1,6 +1,6 @@
 # ta5500-rag: RAG over the Tel Aviv master plan (תא/5500)
 
-RAG (retrieval-augmented generation): find the relevant plan text by embedding similarity and structure, then give it to an LLM (large language model) as context. This repository turns the plan (Word + PDF) into a searchable index and a retrieval module. The AI assistant is **not connected yet**; see [Status](#status) and [Required next steps](#required-next-steps).
+RAG (retrieval-augmented generation): find the relevant plan text by embedding similarity and structure, then give it to an LLM (large language model) as context. This repository turns the plan (Word + PDF) into a searchable index and a retrieval module. An MCP wrapper (`mcp/`) connects it to the ArcGIS AI Assistant app through its MCP hub, but routing and answer quality are still being tested; see [Status](#status), [MCP server](#mcp-server-mcp) and [Required next steps](#required-next-steps).
 
 ## Status
 
@@ -14,7 +14,8 @@ RAG (retrieval-augmented generation): find the relevant plan text by embedding s
 | HTTP service and Docker Compose (service + llama.cpp embedder; same evaluation results as with Lemonade) | Done, runs locally |
 | Demo page for trying Hebrew questions and filters by hand (`/demo`) | Done |
 | Evaluation set (82 questions) and `python -m rag.evaluate` | Done; written by us, small, partly tuned on |
-| Assistant integration, GIS-to-plan code mapping, answer-level evaluation | **Not started** |
+| MCP wrapper over the HTTP service (`mcp/`), registered in the app's MCP hub | Done; search works through the hub. Routing to it from the assistant is not reliable yet |
+| GIS-to-plan code mapping, answer-level evaluation | **Not started** |
 
 Key results (`python -m rag.evaluate`, bge-m3 F16; Hit = every gold chunk is among the returned chunks):
 
@@ -42,6 +43,7 @@ ta5500-rag/
   local_resources/     source documents and built artifacts (git-ignored)
   bundle/              the index served by the containers: chunks, nodes and embeddings parquet files
   service/             HTTP service (FastAPI), the `/demo` test page and the Dockerfile
+  mcp/                 MCP (stdio) wrapper over the HTTP service, for the assistant app's MCP hub
   scripts/             dev-up.ps1: starts Docker Desktop if needed and brings the stack up (Windows dev machines)
   docker-compose.yml   the service plus a llama.cpp embedding server
 ```
@@ -132,7 +134,7 @@ The `pages` stage matches each chunk's Hebrew letters against the text of the ex
 
 **Load:** measured on the dev machine (Lemonade), one search (embed + retrieve) takes about 45 ms, and 8 parallel requests give about 50 searches per second with a p95 of about 170 ms. About 40 ms of a search is the embedding call; the rest is negligible, and the index (about 5 MB, read-only) is shared by all requests, so the service is stateless and scales by replication. Repeat the measurement on the deployment host. Generating the answer is the assistant's job outside this backend; this backend only decides how much context it returns (`budget_tokens`, about 2,000-3,000 tokens per question).
 
-**Resilience (`embed.py`):** each embedding request has a short timeout (`server.timeout_s`, 3 s; a normal request takes about 40 ms) and one retry after a refused or reset connection, but not after a timeout, so a stalled server costs about 3 s (a refused connection on Windows loopback takes about 2 s per attempt, 5 s with the retry; on Linux it fails at once). Any failure raises `EmbeddingError` so the caller can answer gracefully. Call `Retriever.warm_up()` at service start: the embedding model may need several seconds to load on the first request (and again after an idle unload in Lemonade), which the short timeout would otherwise cut off. At most `server.max_concurrent` requests run at once from a process, the rest queue. Query vectors are cached by text (repeated generic plan-border questions skip the server).
+**Resilience (`embed.py`):** each embedding request has a short timeout (`server.timeout_s`, 6 s; a warm request takes about 40 ms, but the containerized CPU embedder took 2-5 s after idle, which a 3 s limit cut off as HTTP 503) and one retry after a refused or reset connection, but not after a timeout, so a stalled server costs about 6 s (a refused connection on Windows loopback takes about 2 s per attempt, 5 s with the retry; on Linux it fails at once). Any failure raises `EmbeddingError` so the caller can answer gracefully. Call `Retriever.warm_up()` at service start: the embedding model may need several seconds to load on the first request (and again after an idle unload in Lemonade), which the short timeout would otherwise cut off. At most `server.max_concurrent` requests run at once from a process, the rest queue. Query vectors are cached by text (repeated generic plan-border questions skip the server).
 
 ## Retrieval
 
@@ -168,6 +170,45 @@ Settings by environment variable: `RAG_API_KEY` (when set, `/v1` calls need an `
 
 Verified: the evaluation run against the containerized embedder gives the same Hit, recall, MRR and bands as with Lemonade (a few borderline hits differ by one chunk, e.g. 10.5 instead of 10.6 chunks per question). Run it again after changing the llama.cpp image, the model or the GGUF.
 
+## MCP server (`mcp/`)
+
+`mcp/server.mjs` is an MCP server over stdio (Node 20+) that wraps the HTTP service, so an MCP client such as the ArcGIS assistant app's MCP hub can call the RAG. It needs the stack from [Service and Docker](#service-and-docker) to be running.
+
+| Tool | Wraps | Purpose |
+|---|---|---|
+| `search_plan` | `POST /v1/search` | Hebrew question and/or `areas`, `zone_types`, `entities`, `headings` filters; returns the Hebrew context block with citations and pages |
+| `get_plan_contents` | `GET /v1/contents` | Table of contents, for the wording and ids to use in `headings` |
+| `get_plan_locations` | `GET /v1/locations` | Planning areas, sub-areas, table 5.4 rows and zone types the filters accept |
+| `get_plan_chunk` | `GET /v1/chunk` | One chunk left out of a search result for size, by the `chunk_id` printed in parentheses in its `omitted` line (returned chunks are already in the context in full) |
+
+Environment: `RAG_BASE_URL` (default `http://localhost:8000`) and `RAG_API_KEY` (sent as `X-API-Key`; use the same value as in the `.env` next to `docker-compose.yml`).
+
+```
+cd mcp
+npm install
+RAG_API_KEY=... node server.mjs      # stdio server; normally started by the hub, not by hand
+```
+
+The app's `mcp-hub.config.example.json` already contains this server and expects `ta5500-rag` as a sibling folder of the app, so copying it to `mcp-hub.config.json` is enough. To register it by hand (the git-ignored `mcp-hub.config.json`, or the hub manager UI) as a stdio server:
+
+```json
+{
+  "id": "ta5500",
+  "label": "TA5500 RAG (תוכנית המתאר)",
+  "transport": "stdio",
+  "command": "node",
+  "args": ["<path-to>/mcp/server.mjs"],
+  "env": { "RAG_BASE_URL": "http://localhost:8000", "RAG_API_KEY": "<same key as in .env>" },
+  "enabled": true
+}
+```
+
+Notes:
+- The app needed no code change: its existing `McpPassthroughAgent` discovers the tools from the hub.
+- The `search_plan` description is what the assistant's router reads, so it says explicitly that plan questions are document questions, not map-layer questions. Without it, a question that mentions a planning area was sent to the map's data-exploration agent.
+- Open issue: one test question ended with "The MCP Hub server did not return a response". The cause is not known yet (a loop of repeated tool calls, or a result too large for the model); the next step is to count the `tools/call` requests in the browser's network tab.
+- If HuggingFace is blocked on your network, the embedder container cannot download the model; use `docker-compose.override.example.yml` to load a GGUF file downloaded by hand.
+
 ## Evaluation
 
 `python -m rag.evaluate [-v]` runs `eval_questions.yml` (84 questions: 15 general, 13 planning area, 23 cross-reference, 12 plan-border cases with `filters` (including an area with no record, zone types that share a chunk and a category filter), 4 spelling variants, 4 table-row entity filters, 4 listing questions, 6 chapter and section headings, 3 no-answer) in three modes: plain similarity, location detected from the text, explicit filters. Gold = node ids whose chunk must be returned; `via_ref` = nodes reachable only through a reference. Metrics: Hit, recall, MRR, reference reach, chunks and tokens returned, match band. `--mode text` and `--category listing heading` narrow a run; query vectors are cached in `.eval_cache.pkl` (git-ignored), so a rerun needs the embedding server only for new or edited questions (`--fresh` rebuilds the cache).
@@ -185,7 +226,7 @@ Caveats:
 ## Required next steps
 
 1. **Try it by hand and collect real questions.** Use the demo page (`/demo`): pick planning areas and zone types or type a Hebrew question, and judge the results; add the useful and the failing questions (including plan-border calls with no question) to `eval_questions.yml`.
-2. **Agree the assistant-retrieval interface with the assistant team.** The service implements `POST /v1/search` (see Service and Docker; the OpenAPI spec at `/docs` is the contract). Remaining: agree the request and response shape with them, decide whether the assistant uses it as an OpenAPI function-calling tool or through an MCP wrapper (a thin layer over the same API, about 50 lines, to be decided once we know whether their runtime supports MCP), and handle a 503 (embedding server down) in the caller.
+2. **Agree the assistant-retrieval interface with the assistant team.** The service implements `POST /v1/search` (see Service and Docker; the OpenAPI spec at `/docs` is the contract). Remaining: agree the request and response shape with them, the MCP wrapper (`mcp/`, a thin layer over the same API) is written and works through the app's MCP hub; see [MCP server](#mcp-server-mcp). Remaining: make the assistant route plan questions to it reliably, and handle a 503 (embedding server down) in the caller (the wrapper already returns it as a tool error).
 3. **Map GIS layers to plan codes.** The planning-area layer must yield the area codes used in table 5.4 (`101`–`907`); the zone layer must yield zone-type ids (`3.2.4`, `3.7.2`…) or names. Decide how to treat several intersecting areas/zones, small overlaps, and zones with no table 5.4 record. Table rows need identifiers too: find out which identifier each layer returns for streets, special planning spaces and urban-renewal spaces (an `ר-NN` code, a name, a polygon id) and adapt the `entities` matching; rows without an `ר-` code are reachable only by label.
 4. **Decide the question flow.** Does the assistant pass the user's question as is or rewrite it into a standalone Hebrew query? Evaluate both, and add questions in the assistant's real phrasing, plus plan-border calls with no question. A paraphrase of a heading (`מה ההנחיות לעריכת תכנית מפורטת` for chapter 4, whose title is `הוראות כלליות להכנת תכניות`) is not found reliably in free text (evaluation case h05): the chapter chunk is mostly the body of 4.1, so other chunks that share more words rank above it. The assistant is expected to read `/v1/contents` and requery with the plan's wording.
 5. **Write the assistant instructions:** answer only from the context; cite by the given citation and page; say so when the plan has no answer; state uncertainty on `התאמה נמוכה`; remember that table 5.4 special provisions override the general chapters; follow mandatory references.
