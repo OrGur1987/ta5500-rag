@@ -179,7 +179,7 @@ Verified: the evaluation run against the containerized embedder gives the same H
 | `search_plan` | `POST /v1/search` | Hebrew question and/or `areas`, `zone_types`, `entities`, `headings` filters; returns the Hebrew context block with citations and pages |
 | `get_plan_contents` | `GET /v1/contents` | Table of contents, for the wording and ids to use in `headings` |
 | `get_plan_locations` | `GET /v1/locations` | Planning areas, sub-areas, table 5.4 rows and zone types the filters accept |
-| `get_plan_chunk` | `GET /v1/chunk` | One chunk by `chunk_id` |
+| `get_plan_chunk` | `GET /v1/chunk` | One chunk left out of a search result for size, by the `chunk_id` printed in parentheses in its `omitted` line (returned chunks are already in the context in full) |
 
 Environment: `RAG_BASE_URL` (default `http://localhost:8000`) and `RAG_API_KEY` (sent as `X-API-Key`; use the same value as in the `.env` next to `docker-compose.yml`).
 

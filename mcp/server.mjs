@@ -112,8 +112,10 @@ server.registerTool(
   "get_plan_chunk",
   {
     title: "קטע בודד מהתוכנית",
-    description: "Fetch one chunk by the chunk_id returned in a search result's hits or omitted list.",
-    inputSchema: { id: z.string().describe("chunk_id from a search result.") },
+    description:
+      "Fetch the full text of a chunk that a search result left out for size. Use the chunk_id printed in parentheses after " +
+      "its citation in the 'omitted' line of the search_plan result; chunks shown in the numbered results are already complete.",
+    inputSchema: { id: z.string().describe("chunk_id from the 'omitted' line of a search_plan result.") },
   },
   async ({ id }) => {
     try {
