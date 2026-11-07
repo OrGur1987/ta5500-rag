@@ -189,7 +189,7 @@ npm install
 RAG_API_KEY=... node server.mjs      # stdio server; normally started by the hub, not by hand
 ```
 
-Register it in the app's MCP hub (the app's `mcp-hub.config.json`, which is git-ignored there, or through the hub manager UI) as a stdio server:
+The app's `mcp-hub.config.example.json` already contains this server and expects `ta5500-rag` as a sibling folder of the app, so copying it to `mcp-hub.config.json` is enough. To register it by hand (the git-ignored `mcp-hub.config.json`, or the hub manager UI) as a stdio server:
 
 ```json
 {

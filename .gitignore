@@ -142,3 +142,5 @@ local_resources/
 
 # local compose override (machine-specific paths)
 docker-compose.override.yml
+node_modules/
+*.gguf
