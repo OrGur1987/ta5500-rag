@@ -614,7 +614,7 @@ class Retriever:
         for unit in units:
             js = unit["notes"]
             layers = list(dict.fromkeys(notes[j].get("layer") or "" for j in js))
-            texts = [notes[j]["text"][:60] for j in js]
+            texts = [notes[j]["text"][:120] for j in js]
             if unit["section"]:
                 scope = self.heading_scope[unit["section"]]
                 if self.chunks.loc[scope, "tokens"].sum() <= cfg["focus_section_tokens"]:
