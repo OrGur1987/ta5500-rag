@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from rag import config
-from rag.embed import embed, embed_query, load_index
+from rag.embed import embed, embed_query, load_index, normalize_for_embedding
 from rag.tree import in_subtree
 
 QUOTES = re.compile(r"[\"'׳״`]")
@@ -33,7 +33,7 @@ CLAUSE_LABEL = re.compile(r"\([^()]+\)$")
 HEB_PREFIXES = "בלהוכמש"
 LONG_DASHES = str.maketrans({"–": "-", "—": "-"})
 MIN_TITLE = 4
-VIAS = {"location": 0, "zone": 0, "search": 1, "section": 2, "ref": 3}
+VIAS = {"location": 0, "zone": 0, "search": 1, "section": 2, "ref": 3, "focus_note": 4}
 FOLLOWERS = ("general", "notes")  # shown right after the hits they qualify, whatever their own score
 
 
@@ -72,6 +72,7 @@ class Retriever:
     def __init__(self, out_dir: Path, model_key: str | None = None):
         self.m = config.model(model_key)
         self.cfg = config.RETRIEVAL
+        self._note_cache: dict[str, np.ndarray] = {}
         self.chunks, self.matrix = load_index(out_dir / "chunks.parquet", out_dir / f"embeddings_{self.m['name']}.parquet")
         nodes = pd.read_parquet(out_dir / "nodes.parquet")
         ids = self.chunks.index
@@ -418,10 +419,11 @@ class Retriever:
         return pd.Series(self.matrix @ q, index=self.chunks.index)
 
     def search(self, query: str | None = None, areas: list[str] | None = None, zone_types: list[str] | None = None,
-               entities: list[str] | None = None, headings: list[str] | None = None) -> Result:
+               entities: list[str] | None = None, headings: list[str] | None = None, focus_notes: list[dict] | None = None) -> Result:
         """Without a question, filters alone are searched with the generic question (a plan border from the GIS).
 
         A zone scope too large to return whole is cut to its most similar chunks, unless there is no question to rank by.
+        `focus_notes` (text, layer, priority, weight) add chunks similar to secondary map layers after all other hits.
         """
         filter_only = not query
         if filter_only:
@@ -462,6 +464,7 @@ class Retriever:
         self._add_table_notes(hits, add)
         self._add_fragments(hits, add)
         self._expand(hits, add, scores)
+        self._add_focus_notes(hits, add, focus_notes)
         first = {"location", "zone", "heading"} if loc["source"] == "filters" else {"zone", "heading"}  # a zone or heading named by title ranks high
         heads = [h for h in hits.values() if h["via"] == "heading"]  # a named heading starts the answer
         ordered = sorted((h for h in hits.values() if h["via"] not in FOLLOWERS and h not in heads),
@@ -514,6 +517,43 @@ class Retriever:
                 add(cid, "location")
         for cid in forced:  # entity rows outside the requested areas
             add(cid, "location")
+
+    def _note_vectors(self, texts: list[str]) -> np.ndarray:
+        """Vectors of note texts; the ones not seen before go to the embedding server in one request."""
+        missing = [t for t in dict.fromkeys(texts) if t not in self._note_cache]
+        if missing:
+            if len(self._note_cache) > 2000:
+                self._note_cache.clear()
+            vectors = embed([normalize_for_embedding(self.m["query_prefix"] + t) for t in missing], self.m["name"])
+            self._note_cache.update(zip(missing, vectors))
+        return np.vstack([self._note_cache[t] for t in texts])
+
+    def _add_focus_notes(self, hits: dict, add, notes: list[dict] | None) -> None:
+        """Chunks similar to the notes of secondary map layers, added after every other hit so they never displace one.
+
+        A chunk needs `focus_min` similarity to a note. Notes of priority 1 come first, then the others by similarity
+        weighted with their overlap share; a layer adds at most `focus_per_layer` chunks and all notes together at most
+        `focus_max_tokens`. Table 5.4 records are reached by planning area, not by similarity.
+        """
+        cfg = self.cfg
+        notes = sorted((n for n in notes or [] if n["text"].strip()), key=lambda n: (n["priority"], -n["weight"]))[:cfg["focus_max_notes"]]
+        if not notes:
+            return
+        sims = self.matrix @ self._note_vectors([n["text"] for n in notes]).T  # chunks x notes
+        eligible = ~self.plan_record.to_numpy()
+        candidates = sorted(
+            (n["priority"], -float(sims[i, j]) * (0.5 + 0.5 * n["weight"]), int(i), j)
+            for j, n in enumerate(notes) for i in np.flatnonzero(eligible & (sims[:, j] >= cfg["focus_min"])))
+        spent, per_layer = 0, Counter()
+        for _, _, i, j in candidates:
+            cid, note = self.chunks.index[i], notes[j]
+            layer, tokens = note["layer"] or "", int(self.chunks.iloc[i]["tokens"])
+            if cid in hits or per_layer[layer] >= cfg["focus_per_layer"] or spent + tokens > cfg["focus_max_tokens"]:
+                continue
+            label = config.LABELS["via"]["focus_note"]
+            add(cid, "focus_note", score=float(sims[i, j]), reason=f"{label}: {layer + ' - ' if layer else ''}{note['text'][:80]}")
+            per_layer[layer] += 1
+            spent += tokens
 
     def _add_table_notes(self, hits: dict, add) -> None:
         """Any table 5.4 record brings the notes that precede the table and qualify its values."""

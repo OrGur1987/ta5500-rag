@@ -214,3 +214,44 @@ def test_in_free_text_the_best_match_leads_and_the_named_zone_follows_it(tmp_pat
     ret = make(tmp_path, monkeypatch, {"3.1.2": 1, "3.3.5": 0.5})
     order = [h["chunk_id"] for h in ret.search("מה יש במוקד תעסוקה חדש?").hits]
     assert order[:3] == ["3.1.2", "3.3.5", "3.3"]  # best search hit, then the zone section and its general instructions
+
+
+def note_axes(monkeypatch, axes):
+    """Makes each note text a unit vector along one chunk's axis, so its similarity to that chunk is 1 and to the others 0."""
+    ids = [c["chunk_id"] for c in CHUNKS]
+
+    def fake(texts, model):
+        out = np.zeros((len(texts), len(ids) + 1), dtype=np.float32)
+        for k, text in enumerate(texts):
+            if text in axes:
+                out[k, ids.index(axes[text])] = 1
+        return out
+
+    monkeypatch.setattr(retrieval, "embed", fake)
+
+
+def test_focus_notes_add_chunks_after_all_other_hits_and_never_displace_them(tmp_path, monkeypatch):
+    ret = make(tmp_path, monkeypatch, {"3.3.5": 1})
+    note_axes(monkeypatch, {"דיור": "4.2", "שימור": "4.4.2"})
+    plain = [h["chunk_id"] for h in ret.search("שאלה").hits]
+    notes = [{"text": "דיור", "layer": "שכבה א", "priority": 2, "weight": 1.0},
+             {"text": "שימור", "layer": "שכבה ב", "priority": 2, "weight": 1.0},
+             {"text": "ללא התאמה", "layer": "שכבה ג", "priority": 1, "weight": 1.0}]  # similar to nothing: below the gate
+    result = ret.search("שאלה", focus_notes=notes)
+    ids = [h["chunk_id"] for h in result.hits]
+    assert ids[:len(plain)] == plain  # the other hits come first, unchanged
+    added = {h["chunk_id"]: h for h in result.hits if h["via"] == "focus_note"}
+    assert set(added) == {"4.2", "4.4.2"} and ids[len(plain):] == list(added)
+    assert "שכבה א" in added["4.2"]["reason"] and "דיור" in added["4.2"]["reason"]
+
+
+def test_focus_notes_respect_priority_the_budget_and_the_per_layer_cap(tmp_path, monkeypatch):
+    note = lambda text, layer, priority: {"text": text, "layer": layer, "priority": priority, "weight": 1.0}
+    ret = make(tmp_path, monkeypatch, {"3.3.5": 1}, focus_max_tokens=50)  # room for one chunk of 50 tokens
+    note_axes(monkeypatch, {"דיור": "4.2", "שימור": "4.4.2"})
+    result = ret.search("שאלה", focus_notes=[note("דיור", "א", 2), note("שימור", "ב", 1)])
+    assert [h["chunk_id"] for h in result.hits if h["via"] == "focus_note"] == ["4.4.2"]  # the more important layer takes the budget
+    ret = make(tmp_path, monkeypatch, {"3.3.5": 1}, focus_per_layer=1)
+    note_axes(monkeypatch, {"דיור": "4.2", "שימור": "4.4.2"})
+    result = ret.search("שאלה", focus_notes=[note("דיור", "א", 2), note("שימור", "א", 2)])
+    assert len([h for h in result.hits if h["via"] == "focus_note"]) == 1  # one layer adds at most `focus_per_layer`

@@ -25,6 +25,13 @@ class Utf8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"  # clients such as Windows PowerShell 5 assume Latin-1 without it
 
 
+class FocusNote(BaseModel):
+    text: str = Field(min_length=2, max_length=300, description="What the map selection holds in one layer, e.g. 'שכבה: מדרגות גובה בינוי - מדרגה 5'. It is embedded and searched on its own.")
+    layer: str | None = Field(None, max_length=80, description="The layer's name, shown in the reason of the chunks the note adds; at most 2 chunks per layer.")
+    priority: int = Field(2, ge=1, le=3, description="1 = more important. Notes of a lower number are served first.")
+    weight: float = Field(1.0, ge=0, le=1, description="Share of the selection the layer covers (overlap); ranks notes of the same priority.")
+
+
 class SearchRequest(BaseModel):
     question: str | None = Field(
         None, description="The user's question in Hebrew. May be left out when filters are given, e.g. a plan "
@@ -50,6 +57,10 @@ class SearchRequest(BaseModel):
                           "document order). `GET /v1/contents` lists the headings to name.",
         examples=[["4.3"]])
     context: bool = Field(True, description="Also return `context`, the ready-made Hebrew text block for the assistant.")
+    focus_notes: list[FocusNote] | None = Field(
+        None, max_length=50, description="What a map selection intersects in layers that are not filters. Chunks similar to the notes are added "
+                                         "after all other hits (`via` focus_note), within a small budget, so they never displace the "
+                                         "filter results. Not counted as a filter: a request needs a question or a filter. An empty list counts as not given.")
 
 
 class Location(BaseModel):
@@ -78,7 +89,7 @@ class Chunk(BaseModel):
 
 class Hit(Chunk):
     score: float = Field(description="Cosine similarity to the question (0-1); not a probability.")
-    via: str = Field(description="Why it was returned: search, location, zone, general (general instructions of the zone category), notes (notes of table 5.4), section or ref.")
+    via: str = Field(description="Why it was returned: search, location, zone, general (general instructions of the zone category), notes (notes of table 5.4), section, ref or focus_note (similar to a map layer's note).")
     reason: str = Field(description="`via` in Hebrew.")
     followed_from: str | None = Field(None, description="Citation of the hit this one was reached from (via section/ref).")
     mandatory: bool | None = Field(None, description="For ref hits: the reference is worded as binding.")
@@ -206,7 +217,8 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
     def search(req: SearchRequest):
         ret: Retriever = app.state.retriever
         try:
-            result = ret.search(req.question, req.areas or None, req.zone_types or None, req.entities or None, req.headings or None)
+            result = ret.search(req.question, req.areas or None, req.zone_types or None, req.entities or None, req.headings or None,
+                                [n.model_dump() for n in req.focus_notes or []] or None)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         except EmbeddingError as e:

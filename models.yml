@@ -34,6 +34,10 @@ retrieval:
   hub_in_degree: 5  # non-mandatory references are not followed out of chunks referenced this often
   budget_tokens: 6000  # cap on text added through siblings and references
   bands: {high: 0.65, medium: 0.58}  # top similarity at or above -> high / medium, else low
+  focus_max_notes: 20  # focus notes (secondary map layers) used per search; the rest are ignored
+  focus_max_tokens: 1500  # budget of chunks added for focus notes, after all other hits
+  focus_per_layer: 2  # chunks the notes of one layer may add
+  focus_min: 0.55  # similarity a chunk needs to a note; relevant layer notes scored 0.55-0.68, unrelated ones up to 0.54
 
 # GIS layer codes -> the /v1/search filter that reaches the same plan section. `layer`: zones = אזורי ייעוד תכנוניים (EzorYeudCode),
 # foci = מוקדי פיתוח ושימוש עירוניים (TypeCode). `note` marks where the layer and the plan disagree: name (code differs from the plan
@@ -75,7 +79,7 @@ gis_codes:
 
 labels:  # Hebrew wording for what the assistant sees; the data keeps the stable keys
   band: {high: התאמה גבוהה, medium: התאמה בינונית, low: התאמה נמוכה}
-  via: {search: חיפוש סמנטי, location: אזור תכנון, zone: אזור יעוד, general: הוראות כלליות לקטגוריית היעוד, notes: הערות לטבלה 5.4, section: המשך הטבלה או הסעיף, heading: כותרת שצוינה בשאלה, ref: הפניה}
+  via: {search: חיפוש סמנטי, location: אזור תכנון, zone: אזור יעוד, general: הוראות כלליות לקטגוריית היעוד, notes: הערות לטבלה 5.4, section: המשך הטבלה או הסעיף, heading: כותרת שצוינה בשאלה, ref: הפניה, focus_note: מיקוד לפי שכבת מפה}
   context:
     band: רמת התאמה
     low_note: ייתכן שהתכנית אינה כוללת מענה לשאלה
