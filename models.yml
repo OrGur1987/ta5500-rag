@@ -14,7 +14,7 @@ chunking:
 
 server:
   base_url: http://localhost:13305/api/v1
-  timeout_s: 3  # per embedding request; a normal one takes about 40 ms
+  timeout_s: 6  # per embedding request; about 40 ms when warm, but the containerized CPU embedder took 2-5 s after idle
   retry_delay_s: 1  # one retry after a refused or reset connection (not after a timeout)
   max_concurrent: 4  # simultaneous embedding requests from this process; the rest queue
 
