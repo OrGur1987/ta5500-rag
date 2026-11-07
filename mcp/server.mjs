@@ -48,6 +48,7 @@ server.registerTool(
       "planning areas (אזורי תכנון, e.g. 703) and special provisions in table 5.4 (טבלה 5.4), building regulations and plan clauses — " +
       "this is a document source, NOT map layers, so never use the map or data-exploration agent for these questions. " +
       "Returns Hebrew plan text with citations (clause and page numbers). Answer only from the returned text and cite the clause and the page number shown for each passage. " +
+      "If the result lists more elements of the user's selected area that were not included, answer first, then offer the user those elements; fetch them on request by passing the listed heading in headings or the chunk id to get_plan_chunk. " +
       "At least one of question or a filter is required.",
     inputSchema: {
       question: z.string().optional().describe("Question in Hebrew."),
@@ -59,6 +60,7 @@ server.registerTool(
         .array(z.object({
           text: z.string(),
           layer: z.string().optional(),
+          code: z.string().optional(),
           priority: z.number().int().min(1).max(3).optional(),
           weight: z.number().min(0).max(1).optional(),
         }))
