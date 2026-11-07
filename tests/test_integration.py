@@ -59,3 +59,9 @@ def test_questions_the_plan_cannot_answer_are_graded_low(retriever):
     questions = yaml.safe_load(QUESTIONS.read_text(encoding="utf-8"))["questions"]
     bands = [retriever.search(q["question"]).band for q in questions if not q["gold"]]
     assert set(bands) == {"low"}
+
+
+def test_every_gis_code_points_at_a_section_of_the_plan(retriever):
+    for g in config.GIS_CODES:
+        found = retriever.resolve_zone(g["value"]) if g["key"] == "zone_types" else [retriever.resolve_heading(g["value"])]
+        assert found and all(found), g

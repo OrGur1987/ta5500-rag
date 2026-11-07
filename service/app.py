@@ -122,6 +122,15 @@ class Entity(BaseModel):
     rows: int = Field(description="How many rows of table 5.4 a filter by this entity returns (every row whose label contains it).")
 
 
+class GisCode(BaseModel):
+    layer: str = Field(description="The GIS layer the code belongs to: zones (EzorYeudCode) or foci (TypeCode).")
+    code: str
+    key: str = Field(description="The /v1/search filter to put `value` in: zone_types or headings.")
+    value: str
+    title: str = Field(description="The plan's title for `value`; empty when the index has no such section.")
+    note: str = Field(description="Where the GIS layer and the plan disagree (name, wording, merged, section, uncertain); empty when they agree.")
+
+
 class LocationsResponse(BaseModel):
     areas: list[dict[str, str]] = Field(description="Planning areas of table 5.4: code and name.")
     subareas: list[dict[str, str]] = Field(
@@ -132,6 +141,8 @@ class LocationsResponse(BaseModel):
         description="Zone types (the sub-sections of chapter 3): id, title and `category`, the id of its category.")
     zone_categories: list[dict[str, str]] = Field(
         description="The chapter-3 categories (3.2-3.12). A category id as a `zone_types` filter stands for all its types.")
+    gis_codes: list[GisCode] = Field(
+        description="How codes of the plan's GIS layers map to filters: put `value` in the `key` filter of /v1/search.")
 
 
 def _page(value) -> int | None:
@@ -239,6 +250,8 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
         areas = ret.chunks.loc[ret.chunks["area"].notna(), ["area", "area_name"]].drop_duplicates("area").sort_values("area")
         by_id = lambda kv: [int(p) for p in kv[0].split(".")]
         found = lambda *texts: not q or norm(q) in norm(" ".join(texts))  # the resolver: names that contain the phrase
+        titles = {"zone_types": {**ret.zone_category_title, **ret.zone_title}, "headings": ret.heading_title}
+        gis = [GisCode(**{"note": "", **g}, title=titles[g["key"]].get(g["value"], "")) for g in config.GIS_CODES]
         return LocationsResponse(
             areas=[{"code": a, "name": n or ""} for a, n in areas.itertuples(index=False) if found(a, n or "")],
             subareas=[s for s in ret.subareas if found(s["code"], s["name"])],
@@ -246,7 +259,8 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
                 ret.entities.values(), key=lambda e: (e["type"], e["code"] or "~", e["label"])) if found(e["code"], e["label"])],
             zone_types=[{"id": i, "title": t, "category": next((c for c, m in ret.zone_members.items() if i in m), "")}
                         for i, t in sorted(ret.zone_title.items(), key=by_id) if found(i, t)],
-            zone_categories=[{"id": c, "title": t} for c, t in sorted(ret.zone_category_title.items(), key=by_id) if found(c, t)])
+            zone_categories=[{"id": c, "title": t} for c, t in sorted(ret.zone_category_title.items(), key=by_id) if found(c, t)],
+            gis_codes=[g for g in gis if found(g.code, g.value, g.title)])
 
     return app
 

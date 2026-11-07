@@ -77,6 +77,15 @@ def test_a_chunk_that_merged_neighbouring_sections_cites_both(tmp_path, monkeypa
     ret = make(tmp_path, monkeypatch, {"3.3.5": 1})
     assert ret.citation("3.10") == "סעיפים 3.10, 3.11"
     assert ret.citation("3.4") == "סעיף 3.4"  # a section and its own sub-section cite the section only
+    assert ret.citation("3.1.2(ב)") == "סעיף 3.1.2(ב)-(ג)"  # small sibling clauses share a chunk and are both cited
+
+
+def test_a_short_title_is_a_zone_type_by_id_and_sub_sections_of_3_8_are_zone_types(tmp_path, monkeypatch):
+    ret = make(tmp_path, monkeypatch, {"3.3.5": 1})
+    assert ret.resolve_zone("3.6.2") == ["3.6.2"]  # 'ים' is too short to be found in free text, not to be named by id
+    assert ret.resolve_zone("3.8") == ["3.8.2"]  # the category stands for its types; 3.8.1 כללי is not one
+    hits = via(ret.search("מה ההוראות?", zone_types=["3.8.2"]))
+    assert (hits["3.8.2"], hits["3.8"]) == ("zone", "general")
 
 
 @pytest.mark.parametrize("zone", ["3.10", "3.11"])
@@ -107,8 +116,11 @@ def test_a_sub_area_filter_narrows_to_its_record_in_any_common_form(tmp_path, mo
     hits = via(ret.search(areas=["703ה"], zone_types=[NEW_HUB]))  # the sub-area narrows before the zone type is matched
     assert hits["5.4[2]"] == "location" and "5.4[1]" not in hits
     assert "5.4[1]" in via(ret.search(areas=["703ה", "703"]))  # a plain code beside it asks for the whole area
+    both = via(ret.search(areas=["703ה", "703ו"]))  # several sub-areas of one area each return their own record
+    assert both["5.4[2]"] == both["5.4[8]"] == "location" and "5.4[1]" not in both
     assert ret.subareas == [{"code": "502ב", "area": "502", "name": "מרקם בנוי לשימור"},
-                            {"code": "703ה", "area": "703", "name": "אזור מעורב"}]
+                            {"code": "703ה", "area": "703", "name": "אזור מעורב"},
+                            {"code": "703ו", "area": "703", "name": "מרקם חדש"}]
 
 
 def test_entity_filters_name_table_rows_by_code_or_label(tmp_path, monkeypatch):
@@ -145,8 +157,8 @@ def test_a_heading_named_by_number_leads_and_a_large_one_is_cut(tmp_path, monkey
 
 def test_the_headings_filter_returns_a_section_and_reports_unknown_values(tmp_path, monkeypatch):
     ret = make(tmp_path, monkeypatch, {"3.3.5": 1})
-    result = ret.search(headings=["4.2", "סעיף 4.2", "דיור בהישג יד", "9.9"])
-    assert [h["chunk_id"] for h in result.hits if h["via"] == "heading"] == ["4.2"]
+    result = ret.search(headings=["4.2", "סעיף 4.2", "דיור בהישג יד", "9.9", "3.1.2(ג)"])
+    assert [h["chunk_id"] for h in result.hits if h["via"] == "heading"] == ["4.2", "3.1.2(ב)"]  # a clause names the chunk that holds it
     assert (result.location["headings_not_found"], result.band) == (["9.9"], "high")
 
 

@@ -35,6 +35,44 @@ retrieval:
   budget_tokens: 6000  # cap on text added through siblings and references
   bands: {high: 0.65, medium: 0.58}  # top similarity at or above -> high / medium, else low
 
+# GIS layer codes -> the /v1/search filter that reaches the same plan section. `layer`: zones = אזורי ייעוד תכנוניים (EzorYeudCode),
+# foci = מוקדי פיתוח ושימוש עירוניים (TypeCode). `note` marks where the layer and the plan disagree: name (code differs from the plan
+# number, matched by name), wording (names differ slightly), merged (several codes, one plan type), section (not a zone type, so
+# `headings`), uncertain (target to be confirmed). Served by GET /v1/locations as `gis_codes`.
+gis_codes:
+  - {layer: zones, code: "310", key: zone_types, value: "3.10"}
+  - {layer: zones, code: "311", key: zone_types, value: "3.11"}
+  - {layer: zones, code: "322", key: zone_types, value: "3.2.2"}
+  - {layer: zones, code: "323", key: zone_types, value: "3.2.3"}
+  - {layer: zones, code: "324", key: zone_types, value: "3.2.4"}
+  - {layer: zones, code: "325", key: zone_types, value: "3.2.5"}
+  - {layer: zones, code: "332", key: zone_types, value: "3.3.2"}
+  - {layer: zones, code: "333", key: zone_types, value: "3.3.3"}
+  - {layer: zones, code: "334", key: zone_types, value: "3.3.4"}
+  - {layer: zones, code: "341", key: zone_types, value: "3.4.1"}
+  - {layer: zones, code: "352", key: zone_types, value: "3.5.2", note: wording}
+  - {layer: zones, code: "3610", key: zone_types, value: "3.6.10"}
+  - {layer: zones, code: "3617", key: zone_types, value: "3.6.18", note: name}
+  - {layer: zones, code: "362", key: zone_types, value: "3.6.2"}
+  - {layer: zones, code: "3620", key: zone_types, value: "3.6.2", note: name}
+  - {layer: zones, code: "363", key: zone_types, value: "3.6.3", note: wording}
+  - {layer: zones, code: "364", key: zone_types, value: "3.6.4", note: wording}
+  - {layer: zones, code: "366", key: zone_types, value: "3.6.6", note: wording}
+  - {layer: zones, code: "368", key: zone_types, value: "3.6.8"}
+  - {layer: zones, code: "369", key: zone_types, value: "3.6.9"}
+  - {layer: zones, code: "382", key: zone_types, value: "3.8.2"}
+  - {layer: zones, code: "391", key: zone_types, value: "3.9", note: merged}
+  - {layer: zones, code: "392", key: zone_types, value: "3.9", note: merged}
+  - {layer: zones, code: "465", key: headings, value: "4.6", note: "section, uncertain"}
+  - {layer: foci, code: "335", key: zone_types, value: "3.3.5"}
+  - {layer: foci, code: "353", key: zone_types, value: "3.5.3"}
+  - {layer: foci, code: "354", key: zone_types, value: "3.5.4"}
+  - {layer: foci, code: "365", key: zone_types, value: "3.6.5"}
+  - {layer: foci, code: "3612", key: zone_types, value: "3.6.12"}
+  - {layer: foci, code: "3618", key: zone_types, value: "3.6.19", note: name}
+  - {layer: foci, code: "461", key: headings, value: "4.7.1", note: section}
+  - {layer: foci, code: "462", key: headings, value: "4.7.1", note: section}
+
 labels:  # Hebrew wording for what the assistant sees; the data keeps the stable keys
   band: {high: התאמה גבוהה, medium: התאמה בינונית, low: התאמה נמוכה}
   via: {search: חיפוש סמנטי, location: אזור תכנון, zone: אזור יעוד, general: הוראות כלליות לקטגוריית היעוד, notes: הערות לטבלה 5.4, section: המשך הטבלה או הסעיף, heading: כותרת שצוינה בשאלה, ref: הפניה}

@@ -25,9 +25,11 @@ MIN_ENTITY_NAME = 6  # shortest row label looked for in free text
 HEADING_REF = re.compile(r"(?<![א-ת])[הוכלבמש]{0,2}(?:פרק|סעיפים|סעיף)\s+(\d+(?:\.\d+)*)")
 STREET_CODE = re.compile(r"(?<![א-ת])ר\s*[-־–]\s*(\d+)")
 STREET_PREFIX = re.compile(r"^(?:רחוב|רח)\s")
-ZONE_TYPE_ID = re.compile(r"^3\.[2-7]\.\d+$")
+ZONE_TYPE_ID = re.compile(r"^3\.(?:[2-9]|1[0-2])\.\d+$")
 CATEGORY_ID = re.compile(r"^3\.\d+$")
 NUMBERED = re.compile(r"^\d+(\.\d+)*$")
+CLAUSE_ID = re.compile(r"^\d+(?:\.\d+)*(?:\([^()]+\))+$")
+CLAUSE_LABEL = re.compile(r"\([^()]+\)$")
 HEB_PREFIXES = "בלהוכמש"
 LONG_DASHES = str.maketrans({"–": "-", "—": "-"})
 MIN_TITLE = 4
@@ -87,9 +89,10 @@ class Retriever:
     # ---- gazetteers ---------------------------------------------------------------------------
 
     def _index_zone_types(self, nodes: pd.DataFrame) -> None:
-        """Zone types are the sub-sections of 3.2-3.7 plus every category without such sub-sections (3.8-3.12).
+        """Zone types are the sub-sections of 3.2-3.12 plus every category without such sub-sections.
 
-        Categories are the sections 3.2-3.12; a category id as a filter stands for all its types.
+        Categories are the sections 3.2-3.12; a category id as a filter stands for all its types. A title shorter than
+        MIN_TITLE (e.g. 'ים') is a type by id but is not looked for in free text.
         """
         names = dict(zip(nodes["id"], nodes["title"]))
         categories = {i: norm(t) for i, t in names.items() if CATEGORY_ID.match(i) and 2 <= int(i[2:]) <= 12}
@@ -98,7 +101,7 @@ class Retriever:
             if not any(i.startswith(f"{c}.") for i in types):
                 types[c] = title
         titles = {t: i for i, t in types.items() if len(t) >= MIN_TITLE}
-        self.zone_title = {i: names[i] for i in titles.values()}
+        self.zone_title = {i: names[i] for i in types}
         self.zone_category_title = {c: names[c] for c in categories}
         self.zone_members = {c: [i for i in self.zone_title if i == c or i.startswith(f"{c}.")] for c in categories}
         self.zone_patterns = [
@@ -125,6 +128,9 @@ class Retriever:
         self.heading_children = {i: [c for c in children[i] if c in titles] for i in titles}
         self.heading_scope = {i: [cid for cid, ns in self.chunks["node_ids"].items() if any(in_subtree(n, i) for n in ns)]
                               for i in titles}
+        # a clause id names the chunk that holds it (small sibling clauses share a chunk)
+        self.clause_nodes = {n for n in self.owner if CLAUSE_ID.match(n)}
+        self.heading_scope.update({n: [self.owner[n]] for n in self.clause_nodes})
 
     def _index_areas(self) -> None:
         records = self.chunks[self.chunks["area"].notna()]
@@ -244,10 +250,10 @@ class Retriever:
         return found
 
     def resolve_heading(self, value: str) -> str | None:
-        """Node id of a chapter or section named by a filter value: its number ('4.3', 'סעיף 4.3') or its full title."""
+        """Node id of a chapter, section or clause named by a filter value: its number ('4.3', 'סעיף 4.7.1(ג)') or a full title."""
         key = norm(BIDI.sub("", str(value)))
-        m = re.fullmatch(r"(?:(?:פרק|סעיף)\s*)?(\d+(?:\.\d+)*)", key)
-        return m[1] if m and m[1] in self.heading_nodes else self.heading_by_title.get(key)
+        m = re.fullmatch(r"(?:(?:פרק|סעיף)\s*)?(\d+(?:\.\d+)*(?:\([^()]+\))*)", key)
+        return m[1] if m and (m[1] in self.heading_nodes or m[1] in self.clause_nodes) else self.heading_by_title.get(key)
 
     def heading_citation(self, node: str) -> str:
         c = config.LABELS["citation"]
@@ -284,7 +290,7 @@ class Retriever:
                     "children": [] if d == 1 else [build(c, d and d - 1) for c in self.heading_children[n]]}
         if node is None:
             return [build(i, depth) for i in sorted((i for i in self.heading_nodes if i.isdigit()), key=int)]
-        if not (root := self.resolve_heading(node)):
+        if not (root := self.resolve_heading(node)) or root not in self.heading_nodes:
             raise ValueError(f"unknown heading: {node}")
         return [build(root, depth)]
 
@@ -367,6 +373,10 @@ class Retriever:
         if len(sections) > 1:  # a chunk that merged neighbouring sections
             listed = ", ".join(sections) if len(sections) <= 3 else f"{sections[0]} - {sections[-1]}"
             return f"{c['sections']} {listed}"
+        clauses = [n for n in row["node_ids"] if not any(n.startswith(f"{o}(") for o in row["node_ids"])]  # top-level clauses
+        parents = {CLAUSE_LABEL.sub("", n) for n in clauses}
+        if not numbered and len(clauses) > 1 and len(parents) == 1 and all(CLAUSE_LABEL.search(n) for n in clauses):  # small sibling clauses merged into one chunk
+            return f"{c['section']} {parents.pop()}{CLAUSE_LABEL.search(clauses[0])[0]}-{CLAUSE_LABEL.search(clauses[-1])[0]}"
         return f"{c['chapter'] if base.isdigit() else c['section']} {base}"
 
     def context(self, result: Result) -> str:
@@ -492,8 +502,10 @@ class Retriever:
         wanted = set(loc["zone_types"])
         for area in loc["areas"]:
             pool = self.plan_record & (self.chunks["area"] == area)
-            for sub in (s for s in loc["subareas"] if s.startswith(area)):
-                narrowed = pool & self.chunks["zone"].fillna("").str.replace(r"[\s\"'׳״]", "", regex=True).str.startswith(sub)
+            subs = [s for s in loc["subareas"] if s.startswith(area)]
+            if subs:  # the records of every requested sub-area, or the whole area when none of them has one
+                zone = self.chunks["zone"].fillna("").str.replace(r"[\s\"'׳״]", "", regex=True)
+                narrowed = pool & pd.concat([zone.str.startswith(s) for s in subs], axis=1).any(axis=1)
                 pool = narrowed if narrowed.any() else pool
             narrowed = pool & pool.index.isin(forced)
             pool = narrowed if narrowed.any() else pool
