@@ -27,7 +27,8 @@ class Utf8JSONResponse(JSONResponse):
 
 class FocusNote(BaseModel):
     text: str = Field(min_length=2, max_length=300, description="What the map selection holds in one layer, e.g. 'שכבה: מדרגות גובה בינוי - מדרגה 5'. It is embedded and searched on its own.")
-    layer: str | None = Field(None, max_length=80, description="The layer's name, shown in the reason of the chunks the note adds; at most 2 chunks per layer.")
+    layer: str | None = Field(None, max_length=80, description="The layer's id or name, shown in the reason of the chunks the note adds.")
+    code: str | None = Field(None, max_length=120, description="The feature's code in the layer, when the layer numbers its features with the plan's section numbers (4831 = item 1 of 4.8.3); it is resolved to a plan section, with overrides for known mistakes. Without a code, the text is searched by similarity.")
     priority: int = Field(2, ge=1, le=3, description="1 = more important. Notes of a lower number are served first.")
     weight: float = Field(1.0, ge=0, le=1, description="Share of the selection the layer covers (overlap); ranks notes of the same priority.")
 
@@ -101,6 +102,16 @@ class Omitted(BaseModel):
     tokens: int
 
 
+class FocusMore(BaseModel):
+    heading: str | None = Field(description="Section id to ask for with the `headings` filter; null for a chunk the notes found by similarity.")
+    chunk_ids: list[str] = Field(description="The chunks left out; GET /v1/chunk fetches one.")
+    layers: list[str]
+    labels: list[str] = Field(description="The note texts that point at it (the first few).")
+    citation: str
+    chunks: int
+    tokens: int
+
+
 class Section(BaseModel):
     id: str = Field(description="Node id, usable in the `headings` filter, e.g. '4.3'.")
     title: str
@@ -123,6 +134,9 @@ class SearchResponse(BaseModel):
         description="Chunks of a requested zone type (or its general instructions) left out because the section is "
                     "large and a question ranked the rest. Fetch them with GET /v1/chunk when relevant.")
     context: str | None = None
+    focus_more: list[FocusMore] = Field(
+        [], description="What the focus notes point at but did not fit the size budget. Ask for it with search_plan(headings=[heading]) "
+                        "or GET /v1/chunk (chunk_ids), and tell the user what else they can look into.")
 
 
 class Entity(BaseModel):
@@ -232,7 +246,7 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
         return SearchResponse(
             band=result.band, band_label=result.band_label, top_score=result.top_score,
             location=Location(**{k: result.location[k] for k in Location.model_fields}), hits=hits,
-            omitted=result.omitted, context=ret.context(result) if req.context else None)
+            omitted=result.omitted, context=ret.context(result) if req.context else None, focus_more=result.focus_more)
 
     @app.get("/v1/chunk", response_model=Chunk, dependencies=[Depends(check_key)],
              summary="Fetch one chunk by the id given in a search response (hits or omitted)")

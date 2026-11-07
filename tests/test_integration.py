@@ -65,3 +65,18 @@ def test_every_gis_code_points_at_a_section_of_the_plan(retriever):
     for g in config.GIS_CODES:
         found = retriever.resolve_zone(g["value"]) if g["key"] == "zone_types" else [retriever.resolve_heading(g["value"])]
         assert found and all(found), g
+
+
+@pytest.mark.parametrize("layer, code, section", [
+    ("infra-points", "4831", "4.8.3"), ("infra-lines", "485", "4.8.5"), ("urban-infra-areas", "4841", "4.8.4"),
+    ("transport-points", "389", "3.8.9"), ("transport-lines", "3855", "3.8.5"), ("employment", "3321", "3.3.2"),
+    ("employment", "3616", "3.6.16"), ("axes", "3613", "3.6.13"),
+    ("axes", "3619", "3.6.14"), ("axes", "613", "3.6.13"), ("transport-lines", "3862", "3.8.5"),  # codes the plan's numbering reads wrongly
+    ("marine-engineering", "ים", "3.6.2"),
+])
+def test_layer_codes_resolve_to_the_plan_section(retriever, layer, code, section):
+    assert retriever.resolve_note_section(layer, code) == section
+
+
+def test_every_override_names_a_section_of_the_plan(retriever):
+    assert all(e["heading"] in retriever.heading_nodes for e in config.FOCUS_CODES)

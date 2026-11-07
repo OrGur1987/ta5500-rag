@@ -55,6 +55,8 @@ def test_a_request_with_neither_question_nor_filters_is_rejected(client):
     assert client.post("/v1/search", json={"focus_notes": [note]}).status_code == 422  # notes are not a filter
     assert client.post("/v1/search", json={"question": "שאלה", "focus_notes": [{**note, "priority": 0}]}).status_code == 422
     assert client.post("/v1/search", json={"question": "שאלה", "focus_notes": [note]}).status_code == 200
+    coded = client.post("/v1/search", json={"question": "שאלה", "focus_notes": [{**note, "code": "382"}]}).json()
+    assert coded["focus_more"] == [] and any(h["via"] == "focus_note" for h in coded["hits"])
 
 
 def test_api_key_is_required_when_configured(ret, monkeypatch):

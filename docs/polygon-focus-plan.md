@@ -103,27 +103,27 @@ Notes from the checks:
 - Sub-areas and entities name rows; the area's rows of the requested zone types come beside them, not instead of them. With `areas: ["703ה"]` and `zone_types: ["3.3.5"]` the answer holds the 703ה record and the area-wide "מוקד תעסוקה חדש" row. This is why the UI sends a sub-area code without the plain area code.
 
 
-## Secondary layers: `focus_notes`
+## Other layers: `focus_notes` with plan codes
 
-Layers beyond the five are not hard filters, but their intersect results still drive retrieval, so plan text relevant to the polygon reaches the assistant. The five layers must never be crowded out by the rest, hence two tiers:
+Decision: map as many elements as possible to actual plan sections and return them, even if the answer grows; the assistant needs the instructions that apply to the polygon. Volume is handled by priority and a dynamic budget, and what does not fit is listed so the assistant can answer first and offer the rest.
 
-| Tier | Layers | Reaches the RAG as | Precedence |
-|---|---|---|---|
-| Primary | The five configured layers | Hard filters: `areas`, `zone_types`, `entities` | Applied first, behaviour unchanged |
-| Secondary | Every other layer | `focus_notes`: short texts, each embedded and searched on its own | Fills only a reserved share of the result |
+Two channels, one goal (every intersected element is queried):
 
-`focus_notes` is an optional list on `/v1/search` (additive, non-breaking). Each note: `text` (for example "שכבה X: ערך Y"), `layer` (label for the reason), `priority` (from the layer config, 1 = higher) and `weight` (overlap share, 0-1). `/v1/search` is stateless, so the client sends the notes with every search call (a few KB after capping); no server-side focus session.
+| Channel | Layers | Reaches the RAG as |
+|---|---|---|
+| Filters | Tables whose values map to table 5.4 rows or zone types (the six main ones) | `areas`, `zone_types`, `entities`, `headings`: deterministic, never crowded out |
+| Notes | Every other table | `focus_notes` (`layer`, `code`, `text`, `priority`, `weight`), resolved to plan sections and served within a budget |
 
-Rules that keep the important results first:
+The other layers number their features with the plan's section numbers without dots (4831 = item 1 of 4.8.3). A code is resolved to the longest prefix that is a plan section; `focus_codes` in `models.yml` overrides the codes that numbering reads wrongly (3860-3863 numbering overflow, 3619, 3623-3625, 613, 471, 472, 473) and gives a section to layers without codes (by zone name). On the real names, plain similarity found the right section's chunk in the top 5 for only 45% of rows, which is why codes come first.
 
-1. **Fill order:** filter chunks, then the question's own search hits (both as today), then note hits. A note hit never displaces an earlier one.
-2. **Separate budget:** note hits get at most about 25% of `budget_tokens` and at most 2 chunks per layer. Both values live in `models.yml` (`retrieval`).
-3. **Similarity gate:** a note contributes only chunks scoring above a minimum (start from the reference-following gate, 0.55). A layer with nothing relevant adds nothing.
-4. **Ranking among notes:** score first, then `priority`, then `weight`.
-5. **Own embeddings:** each note is a separate query (one batched embedding call, cached by text). Notes are never merged into the question text, which would dilute both.
-6. **Dedupe and reason:** chunks already returned are skipped; each note hit has `via: focus_note` and a Hebrew `reason` naming the layer and value.
+Rules:
 
-Deferred: an optional per-layer `heading` hint (a plan section the layer relates to) that would bias its notes toward that section. Start with embedding similarity only.
+1. **Fill order:** filter chunks, the question's own hits, then note hits. A note hit never displaces an earlier one.
+2. **Sections:** notes on one section are served together; the section whole if up to `focus_section_tokens`, else its own chunk and the two most similar.
+3. **Budget:** `focus_total_tokens` less what the other hits took, between `focus_min_tokens` and `focus_max_tokens`. Units go by priority, then overlap weight.
+4. **More to ask for:** what does not fit is returned in `focus_more` (a `heading` for `headings`, or chunk ids) and listed in the context block.
+5. **Notes without a code** (or an unknown section) are found by similarity to their text (`focus_min`, at most `focus_per_layer` chunks per layer), and need the embedding server; coded notes on small sections do not. If embedding fails, the notes degrade instead of failing the search.
+6. **Layer ids** in notes (`layer`) are the keys of the overrides: employment, transport-areas, marine-engineering, axes, urban-infra-areas, infra-lines, transport-lines, transport-points, infra-points.
 
 ## Backend (`ta5500-rag`)
 

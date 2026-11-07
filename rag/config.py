@@ -14,6 +14,7 @@ _CFG = yaml.safe_load((ROOT / "models.yml").read_text(encoding="utf-8"))
 CHUNKING = _CFG["chunking"]
 RETRIEVAL: dict = _CFG["retrieval"]
 GIS_CODES: list[dict] = _CFG["gis_codes"]
+FOCUS_CODES: list[dict] = _CFG["focus_codes"]
 LABELS = _CFG["labels"]
 SERVER = _CFG["server"]
 BASE_URL = os.environ.get("RAG_EMBED_BASE_URL") or SERVER["base_url"]

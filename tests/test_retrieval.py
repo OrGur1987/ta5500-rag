@@ -243,7 +243,7 @@ def test_focus_notes_add_chunks_after_all_other_hits_and_never_displace_them(tmp
     assert ids[:len(plain)] == plain  # the other hits come first, unchanged
     added = {h["chunk_id"]: h for h in result.hits if h["via"] == "focus_note"}
     assert set(added) == {"4.2", "4.4.2"} and ids[len(plain):] == list(added)
-    assert "שכבה א" in added["4.2"]["reason"] and "דיור" in added["4.2"]["reason"]
+    assert "דיור" in added["4.2"]["reason"]  # the reason carries the note text, which names the layer
 
 
 def test_focus_notes_respect_priority_the_budget_and_the_per_layer_cap(tmp_path, monkeypatch):
@@ -256,3 +256,23 @@ def test_focus_notes_respect_priority_the_budget_and_the_per_layer_cap(tmp_path,
     note_axes(monkeypatch, {"דיור": "4.2", "שימור": "4.4.2"})
     result = ret.search("שאלה", focus_notes=[note("דיור", "א", 2), note("שימור", "א", 2)])
     assert len([h for h in result.hits if h["via"] == "focus_note"]) == 1  # one layer adds at most `focus_per_layer`
+
+
+def test_a_layer_code_resolves_to_the_longest_plan_section_prefix_with_overrides(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "FOCUS_CODES", [{"layer": "axes", "code": "3619", "heading": "3.4.2"},
+                                                {"layer": "x", "code": "זים", "heading": "9.9"}])
+    ret = make(tmp_path, monkeypatch, {"3.3.5": 1})
+    assert ret.resolve_note_section("l", "382") == ret.resolve_note_section("l", "3821") == "3.8.2"  # item 1 of 3.8.2
+    assert ret.resolve_note_section("l", "310") == "3.10" and ret.resolve_note_section("l", "34") == "3.4"
+    assert ret.resolve_note_section("axes", "3619") == "3.4.2"  # an override beats the digits
+    assert ret.resolve_note_section("x", "זים") is None  # an override to a heading the plan lacks
+    assert ret.resolve_note_section("l", "999") is None and ret.resolve_note_section("l", "abc") is None
+
+
+def test_notes_with_a_plan_code_bring_the_section_and_the_rest_is_listed_to_ask_for(tmp_path, monkeypatch):
+    note = lambda text, code, priority: {"text": text, "layer": "שכבה", "code": code, "priority": priority, "weight": 1.0}
+    ret = make(tmp_path, monkeypatch, {"3.3.5": 1}, focus_min_tokens=50, focus_max_tokens=50)  # room for one chunk
+    result = ret.search("שאלה", focus_notes=[note("דיור", "42", 2), note("דרכים", "382", 1), note("דרכים נוספות", "3821", 1)])
+    assert [h["chunk_id"] for h in result.hits if h["via"] == "focus_note"] == ["3.8.2"]  # priority 1 first; both notes on 3.8.2 together
+    assert [(m["heading"], m["chunk_ids"]) for m in result.focus_more] == [("4.2", ["4.2"])]  # what did not fit
+    assert "[כותרת 4.2]" in ret.context(result)

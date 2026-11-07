@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from rag import config
-from rag.embed import embed, embed_query, load_index, normalize_for_embedding
+from rag.embed import EmbeddingError, embed, embed_query, load_index, normalize_for_embedding
 from rag.tree import in_subtree
 
 QUOTES = re.compile(r"[\"'׳״`]")
@@ -66,6 +66,7 @@ class Result:
     band: str  # high / medium / low
     band_label: str  # the same in Hebrew, for the assistant
     omitted: list[dict] = field(default_factory=list)  # chunk_id, citation, tokens of zone chunks left out for size
+    focus_more: list[dict] = field(default_factory=list)  # what map-layer notes point at but did not fit: heading or chunk ids to ask for
 
 
 class Retriever:
@@ -84,6 +85,7 @@ class Retriever:
         self.by_section = self.chunks.groupby("section_id").groups
         self._index_zone_types(nodes)
         self._index_headings(nodes)
+        self.focus_overrides = {(e["layer"], str(e["code"])): e["heading"] for e in config.FOCUS_CODES}
         self._index_areas()
         self._index_entities()
 
@@ -405,6 +407,10 @@ class Retriever:
             blocks.append(f"[{n}] {' | '.join(x for x in (h['citation'], pages, via) if x)}\n{title}\n{row['text']}")
         if result.omitted:
             blocks.append(f"{t['omitted']}: " + "; ".join(f"{o['citation']} ({o['chunk_id']})" for o in result.omitted))
+        if result.focus_more:
+            lines = [f"- {'; '.join(m['labels'])} → {m['citation']} [{t['by_heading']} {m['heading']}]" if m["heading"]
+                     else f"- {'; '.join(m['labels'])} → {m['citation']} [{t['by_id']} {m['chunk_ids'][0]}]" for m in result.focus_more]
+            blocks.append(f"{t['focus_more']}:\n" + "\n".join(lines))
         return "\n\n".join(blocks).translate(LONG_DASHES)
 
     # ---- search -------------------------------------------------------------------------------
@@ -423,7 +429,7 @@ class Retriever:
         """Without a question, filters alone are searched with the generic question (a plan border from the GIS).
 
         A zone scope too large to return whole is cut to its most similar chunks, unless there is no question to rank by.
-        `focus_notes` (text, layer, priority, weight) add chunks similar to secondary map layers after all other hits.
+        `focus_notes` (text, layer, code, priority, weight) bring in plan text for the other map layers after all other hits.
         """
         filter_only = not query
         if filter_only:
@@ -464,7 +470,8 @@ class Retriever:
         self._add_table_notes(hits, add)
         self._add_fragments(hits, add)
         self._expand(hits, add, scores)
-        self._add_focus_notes(hits, add, focus_notes)
+        more: list[dict] = []
+        self._add_focus_notes(hits, add, focus_notes, more)
         first = {"location", "zone", "heading"} if loc["source"] == "filters" else {"zone", "heading"}  # a zone or heading named by title ranks high
         heads = [h for h in hits.values() if h["via"] == "heading"]  # a named heading starts the answer
         ordered = sorted((h for h in hits.values() if h["via"] not in FOLLOWERS and h not in heads),
@@ -484,7 +491,7 @@ class Retriever:
         omitted = [{"chunk_id": c, "citation": self.citation(c), "tokens": int(self.chunks.at[c, "tokens"])}
                    for c in dict.fromkeys(capped) if c not in hits]
         band = "high" if structural else next(b for b in ("high", "medium", "low") if b == "low" or top >= cfg["bands"][b])
-        return Result(ordered, loc, top, band, config.LABELS["band"][band], omitted)
+        return Result(ordered, loc, top, band, config.LABELS["band"][band], omitted, more)
 
     def _add_records(self, add, scores: pd.Series, loc: dict, ranked: bool = True) -> None:
         """Table 5.4 records: per planning area the rows it names, those of the requested zone types, else the most similar ones.
@@ -531,32 +538,114 @@ class Retriever:
             self._note_cache.update(zip(missing, vectors))
         return np.vstack([self._note_cache[t] for t in texts])
 
-    def _add_focus_notes(self, hits: dict, add, notes: list[dict] | None) -> None:
-        """Chunks similar to the notes of secondary map layers, added after every other hit so they never displace one.
+    @staticmethod
+    def _section_splits(digits: str) -> list[str]:
+        """Every way to read a digit string as a dotted section number: a one-digit chapter, then parts of one or two digits."""
+        def parts(rest: str):
+            if not rest:
+                yield []
+            for n in (1, 2):
+                if rest and len(rest) >= n and rest[0] != "0":
+                    for tail in parts(rest[n:]):
+                        yield [rest[:n], *tail]
+        return [".".join([digits[0], *p]) for p in parts(digits[1:])] if len(digits) > 1 else [digits]
 
-        A chunk needs `focus_min` similarity to a note. Notes of priority 1 come first, then the others by similarity
-        weighted with their overlap share; a layer adds at most `focus_per_layer` chunks and all notes together at most
-        `focus_max_tokens`. Table 5.4 records are reached by planning area, not by similarity.
+    def resolve_note_section(self, layer: str | None, code: str | None) -> str | None:
+        """The plan section a map layer's code points at: an override first, else the digits read as a section number.
+
+        The layers number their features with the plan's section numbers without dots, and the digits after the section
+        are an item inside it (4831 is item 1 of 4.8.3), so the longest prefix that is a section wins.
+        """
+        code = re.sub(r"\s+", " ", str(code or "")).strip()
+        if (layer, code) in self.focus_overrides:
+            override = self.focus_overrides[(layer, code)]
+            return override if override in self.heading_nodes else None
+        if not code.isdigit():
+            return None
+        for length in range(len(code), 0, -1):
+            found = [s for s in self._section_splits(code[:length]) if s in self.heading_nodes]
+            if found:
+                return max(found, key=lambda s: s.count("."))
+        return None
+
+    def _add_focus_notes(self, hits: dict, add, notes: list[dict] | None, more: list[dict]) -> None:
+        """Plan text for the other map layers, added after every other hit so it never displaces one.
+
+        A note whose code names a plan section brings that section (whole if small, else its own chunk and the two most
+        similar); notes on the same section are served together. A note without a section brings the chunks most similar
+        to its text (`focus_min`, `focus_per_layer`). Units go by priority, then overlap weight, until the budget is
+        spent: `focus_total_tokens` less what the other hits took, between `focus_min_tokens` and `focus_max_tokens`.
+        What does not fit is listed in `more` (a heading or chunk ids) for the assistant to ask for. Table 5.4 records
+        are reached by planning area, not by similarity.
         """
         cfg = self.cfg
         notes = sorted((n for n in notes or [] if n["text"].strip()), key=lambda n: (n["priority"], -n["weight"]))[:cfg["focus_max_notes"]]
         if not notes:
             return
-        sims = self.matrix @ self._note_vectors([n["text"] for n in notes]).T  # chunks x notes
+        used = sum(h["tokens"] for h in hits.values())
+        budget = min(cfg["focus_max_tokens"], max(cfg["focus_min_tokens"], cfg["focus_total_tokens"] - used))
         eligible = ~self.plan_record.to_numpy()
-        candidates = sorted(
-            (n["priority"], -float(sims[i, j]) * (0.5 + 0.5 * n["weight"]), int(i), j)
-            for j, n in enumerate(notes) for i in np.flatnonzero(eligible & (sims[:, j] >= cfg["focus_min"])))
-        spent, per_layer = 0, Counter()
-        for _, _, i, j in candidates:
-            cid, note = self.chunks.index[i], notes[j]
-            layer, tokens = note["layer"] or "", int(self.chunks.iloc[i]["tokens"])
-            if cid in hits or per_layer[layer] >= cfg["focus_per_layer"] or spent + tokens > cfg["focus_max_tokens"]:
+        packs: dict[str, dict] = {}
+        units = []
+        for j, note in enumerate(notes):
+            section = self.resolve_note_section(note.get("layer"), note.get("code"))
+            if section in packs:
+                packs[section]["notes"].append(j)
+                packs[section]["weight"] = max(packs[section]["weight"], note["weight"])
                 continue
-            label = config.LABELS["via"]["focus_note"]
-            add(cid, "focus_note", score=float(sims[i, j]), reason=f"{label}: {layer + ' - ' if layer else ''}{note['text'][:80]}")
-            per_layer[layer] += 1
-            spent += tokens
+            units.append(unit := {"section": section, "notes": [j], "priority": note["priority"], "weight": note["weight"]})
+            if section:
+                packs[section] = unit
+        units.sort(key=lambda u: (u["priority"], -u["weight"]))
+
+        large = lambda section: self.chunks.loc[self.heading_scope[section], "tokens"].sum() > cfg["focus_section_tokens"]
+        need = [j for u in units for j in u["notes"] if not u["section"] or large(u["section"])]
+        columns: dict[int, np.ndarray] = {}
+        if need:  # similarity only ranks the chunks of a large section, or finds chunks for a note without a code
+            try:
+                columns = dict(zip(need, (self.matrix @ self._note_vectors([notes[j]["text"] for j in need]).T).T))
+            except EmbeddingError:
+                pass  # notes are soft: without vectors a large section gives its own chunk and a note without a code adds nothing
+        nothing = np.zeros(len(self.chunks), dtype=np.float32)
+        sim = lambda j: columns.get(j, nothing)  # similarity of every chunk to note j
+        index = self.chunks.index
+        label = config.LABELS["via"]["focus_note"]
+        spent, per_layer = 0, Counter()
+        for unit in units:
+            js = unit["notes"]
+            layers = list(dict.fromkeys(notes[j].get("layer") or "" for j in js))
+            texts = [notes[j]["text"][:60] for j in js]
+            if unit["section"]:
+                scope = self.heading_scope[unit["section"]]
+                if self.chunks.loc[scope, "tokens"].sum() <= cfg["focus_section_tokens"]:
+                    picked = list(scope)
+                else:
+                    own = [c for c in (self.owner.get(unit["section"]),) if c]
+                    rest = [c for c in scope if c not in own]
+                    best = np.max([sim(j)[[index.get_loc(c) for c in rest]] for j in js], axis=0) if rest else []
+                    picked = [*own, *(rest[i] for i in np.argsort(-np.asarray(best))[:2])]
+            else:
+                column = sim(js[0])
+                found = np.flatnonzero(eligible & (column >= cfg["focus_min"]))
+                layer = layers[0]
+                room = max(0, cfg["focus_per_layer"] - per_layer[layer])
+                picked = [index[i] for i in found[np.argsort(-column[found])][:room]]
+                per_layer[layer] += len(picked)
+            skipped = []
+            for cid in picked:
+                if cid in hits:
+                    continue
+                tokens = int(self.chunks.at[cid, "tokens"])
+                if spent + tokens > budget:
+                    skipped.append(cid)
+                    continue
+                add(cid, "focus_note", score=float(max(sim(j)[index.get_loc(cid)] for j in js)),
+                    reason=f"{label}: {'; '.join(texts[:3])}")
+                spent += tokens
+            if skipped and len(more) < cfg["focus_max_notes"]:
+                more.append({"heading": unit["section"], "chunk_ids": skipped, "layers": [l for l in layers if l], "labels": texts[:5],
+                             "citation": self.heading_citation(unit["section"]) if unit["section"] else self.citation(skipped[0]),
+                             "chunks": len(skipped), "tokens": int(self.chunks.loc[skipped, "tokens"].sum())})
 
     def _add_table_notes(self, hits: dict, add) -> None:
         """Any table 5.4 record brings the notes that precede the table and qualify its values."""
