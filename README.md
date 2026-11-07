@@ -13,7 +13,7 @@ RAG (retrieval-augmented generation): find the relevant plan text by embedding s
 | Tests (56 unit, 6 integration) | Done |
 | HTTP service and Docker Compose (service + llama.cpp embedder; same evaluation results as with Lemonade) | Done, runs locally |
 | Demo page for trying Hebrew questions and filters by hand (`/demo`) | Done |
-| Evaluation set (82 questions) and `python -m rag.evaluate` | Done; written by us, small, partly tuned on |
+| Evaluation set (92 questions) and `python -m rag.evaluate` | Done; written by us, small, partly tuned on |
 | MCP wrapper over the HTTP service (`mcp/`), registered in the app's MCP hub | Done; search works through the hub. Routing to it from the assistant is not reliable yet |
 | GIS-to-plan code mapping, answer-level evaluation | **Not started** |
 
@@ -212,7 +212,7 @@ Notes:
 
 ## Evaluation
 
-`python -m rag.evaluate [-v]` runs `eval_questions.yml` (84 questions: 15 general, 13 planning area, 23 cross-reference, 12 plan-border cases with `filters` (including an area with no record, zone types that share a chunk and a category filter), 4 spelling variants, 4 table-row entity filters, 4 listing questions, 6 chapter and section headings, 3 no-answer) in three modes: plain similarity, location detected from the text, explicit filters. Gold = node ids whose chunk must be returned; `via_ref` = nodes reachable only through a reference. Metrics: Hit, recall, MRR, reference reach, chunks and tokens returned, match band. `--mode text` and `--category listing heading` narrow a run; query vectors are cached in `.eval_cache.pkl` (git-ignored), so a rerun needs the embedding server only for new or edited questions (`--fresh` rebuilds the cache).
+`python -m rag.evaluate [-v]` runs `eval_questions.yml` (92 questions: 15 general, 13 planning area, 23 cross-reference, 12 plan-border cases with `filters` (including an area with no record, zone types that share a chunk and a category filter), 8 polygon-focus cases (`focus`: filters mapped from GIS codes, sub-areas of one area, a clause id, and secondary-layer notes), 4 spelling variants, 4 table-row entity filters, 4 listing questions, 6 chapter and section headings, 3 no-answer) in three modes: plain similarity, location detected from the text, explicit filters. Gold = node ids whose chunk must be returned; `via_ref` = nodes reachable only through a reference. Metrics: Hit, recall, MRR, reference reach, chunks and tokens returned, match band. `--mode text` and `--category listing heading` narrow a run; query vectors are cached in `.eval_cache.pkl` (git-ignored), so a rerun needs the embedding server only for new or edited questions (`--fresh` rebuilds the cache).
 
 Caveats:
 - We wrote the questions from the plan's own wording, and the mandatory-reference cues were widened after the first run missed references, so the figures are optimistic and not an independent test.

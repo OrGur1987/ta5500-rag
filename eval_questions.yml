@@ -424,6 +424,64 @@ questions:
     gold: ["5.4[59]", "5.4[60]", "3.2.2", "3.2.3", "3.2.4", "3.2.5"]
     answer: אזורי מגורים באזור תכנון 206 - בבניה נמוכה ובבניה עירונית (רח"ק מרבי 4, עד 15 קומות), לפי סעיפי אזורי המגורים 3.2.2 עד 3.2.5
 
+  # --- polygon focus: the filters a map selection would send after its GIS codes are mapped through gis_codes (GET /v1/locations)
+  - id: f01
+    category: focus
+    question: מה ההוראות לעריכת תכנית מפורטת בתחום הזה?
+    filters: {areas: ["101א", "101ב"]}
+    gold: ["5.4[3]", "5.4[4]"]
+    answer: שני תתי-האזורים של אזור 101 (101 א' צומת גלילות ו-101 ב'), לא רק הראשון מביניהם
+
+  - id: f02
+    category: focus
+    question: מה ההוראות לעריכת תכנית מפורטת בתחום הזה?
+    filters: {entities: ["ר-31", "ר-12"]}
+    gold: ["5.4[85]", "5.4[98]", "5.4[16]", "5.4[25]", "5.4[32]"]
+    answer: שורות הרחובות אבן גבירול (ר-31, אזורים 301 ו-401) ואיינשטיין (ר-12, אזורים 103, 104 ו-106)
+
+  - id: f03
+    category: focus
+    question: אילו הוראות חלות על השטח שנבחר?
+    filters: {zone_types: ["3.6.2"]}
+    gold: ["3.6.2"]
+    answer: סעיף 3.6.2 (ים), שקוד השכבה 362 מפנה אליו, ועוד כללי המרחב הציבורי
+
+  - id: f04
+    category: focus
+    question: אילו הוראות חלות על השטח שנבחר?
+    filters: {zone_types: ["3.8.2"]}
+    gold: ["3.8.2", "3.8.1"]
+    answer: סעיף 3.8.2 (דרכים), שקוד השכבה 382 מפנה אליו, וההוראות הכלליות של סעיף 3.8
+
+  - id: f05
+    category: focus
+    question: אילו הוראות חלות על השטח שנבחר?
+    filters: {headings: ["4.6"]}
+    gold: ["4.6.1", "4.6.2", "4.6.3", "4.6.4"]
+    answer: סעיף 4.6 (איכות הסביבה), שקוד השכבה 465 (נחל) מפנה אליו, ובכללו 4.6.1 שבאותו קטע
+
+  - id: f06
+    category: focus
+    question: מה ההוראות בנושא זה?
+    filters: {headings: ["4.7.1(ג)"]}
+    gold: ["4.7.1(ג)"]
+    answer: סעיף קטן 4.7.1(ג), שנשמר באותו קטע עם 4.7.1(ב)
+
+  - id: f07
+    category: focus
+    question: מה ההוראות לעריכת תכנית מפורטת בתחום הזה?
+    filters: {areas: ["703ה"], zone_types: ["3.4.1"]}
+    gold: ["5.4[156]", "3.4.1"]
+    answer: שורת 703 ה' אזור מעורב וסעיף 3.4.1 (אזור מעורב)
+
+  # secondary layers as notes: they add plan text after the filter results and never replace it
+  - id: f08
+    category: focus
+    question: מה ההוראות לעריכת תכנית מפורטת בתחום הזה?
+    filters: {areas: ["703ה"], focus_notes: [{text: "עיצוב עירוני פוליגוני: מרקם בנוי לשימור", layer: "עיצוב עירוני פוליגוני", priority: 2, weight: 0.6}, {text: "צירי תכנון וקווי תיחום: ציר ירוק", layer: "צירי תכנון", priority: 1, weight: 0.9}]}
+    gold: ["5.4[156]", "3.6.13", "4.4.2"]
+    answer: שורת 703 ה' מהסינון, ובנוסף סעיף 3.6.13 (צירים ירוקים) וסעיף 4.4.2 (מרקם בנוי לשימור) מהשכבות המשניות
+
   # --- no answer in the plan: the assistant should say so
   - id: n01
     category: no_answer

@@ -130,7 +130,7 @@ Deferred: an optional per-layer `heading` hint (a plan section the layer relates
 - **B1. Coverage check (done for zone types and streets).** The code table is in `models.yml` (`gis_codes`) and served as `gis_codes` in `GET /v1/locations`; an integration test asserts that every mapped value exists in the plan. Still to confirm with real values: street codes (`ר-31`) and sub-area codes (`702ב`) as filters, and long lists. `entities_not_found` already reports misses. Add a server-side cap on list sizes only if a large list degrades results.
 - **B2. `focus_notes` retrieval (done):** field on `SearchRequest`, `Retriever._add_focus_notes` with its own budget, gate and per-layer cap, `via: focus_note` hits, parameters in `models.yml` (`focus_min` 0.55 set on ten hand-written notes; revisit with real selections).
 - **B3. MCP wrapper (done):** `focus_notes` is in the `search_plan` schema and passed through; its description tells the model not to fill it in. The UI agent must also remove it from the schema it shows the model.
-- **B4. Tests (done, except the evaluation set):** unit tests for placement after all other hits, the gate, priority, the budget and the per-layer cap; service tests for validation. Still to add: focus-style questions in `eval_questions.yml`.
+- **B4. Tests (done):** unit tests for placement after all other hits, the gate, priority, the budget and the per-layer cap; service tests for validation; 8 `focus` questions in `eval_questions.yml` (sub-areas of one area, streets, GIS codes mapped to `zone_types` and `headings`, a clause id, secondary-layer notes), all passing in filters mode.
 - **B5. Docs (done):** README, endpoint table and Retrieval step 6.
 
 ## Frontend (UI repo)
