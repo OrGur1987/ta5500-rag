@@ -64,7 +64,9 @@ server.registerTool(
         body: { question, areas, zone_types, entities, headings, context: true },
       });
       const head = `רמת התאמה: ${r.band_label ?? r.band}`;
-      return ok(`${head}\n\n${r.context ?? JSON.stringify(r.hits, null, 2)}`);
+      const missingHeadings = r.location?.headings_not_found ?? [];
+      const warning = missingHeadings.length ? `כותרות שלא נמצאו בתכנית: ${missingHeadings.join(", ")}\n\n` : "";
+      return ok(`${head}\n\n${warning}${r.context ?? JSON.stringify(r.hits, null, 2)}`);
     } catch (e) {
       return fail(e);
     }

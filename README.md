@@ -172,7 +172,7 @@ Verified: the evaluation run against the containerized embedder gives the same H
 
 ## MCP server (`mcp/`)
 
-`mcp/server.mjs` is an MCP server over stdio (Node 18+) that wraps the HTTP service, so an MCP client such as the ArcGIS assistant app's MCP hub can call the RAG. It needs the stack from [Service and Docker](#service-and-docker) to be running.
+`mcp/server.mjs` is an MCP server over stdio (Node 20+) that wraps the HTTP service, so an MCP client such as the ArcGIS assistant app's MCP hub can call the RAG. It needs the stack from [Service and Docker](#service-and-docker) to be running.
 
 | Tool | Wraps | Purpose |
 |---|---|---|
