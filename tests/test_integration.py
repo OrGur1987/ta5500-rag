@@ -18,7 +18,7 @@ def retriever():
     if not (config.DATA_DIR / f"embeddings_{model['name']}.parquet").exists():
         pytest.skip("artifacts are not built (run preprocess.py)")
     try:
-        urllib.request.urlopen(f"{config.BASE_URL}/models", timeout=2)
+        urllib.request.urlopen(f"{config.BASE_URL}/models", timeout=6)
     except OSError:
         pytest.skip("embedding server is not reachable")
     ret = Retriever(config.DATA_DIR)

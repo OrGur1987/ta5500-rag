@@ -43,7 +43,7 @@ retrieval:
   focus_min: 0.55  # similarity a chunk needs to a note; relevant layer notes scored 0.55-0.68, unrelated ones up to 0.54
 
 # GIS layer codes -> the /v1/search filter that reaches the same plan section. `layer`: zones = אזורי ייעוד תכנוניים (EzorYeudCode),
-# foci = מוקדי פיתוח ושימוש עירוניים (TypeCode). `note` marks where the layer and the plan disagree: name (code differs from the plan
+# foci = מוקדי פיתוח ושימוש עירוניים (TypeCode), employment = ייעודי תעסוקה וקירוי (TypeCode). `note` marks where the layer and the plan disagree: name (code differs from the plan
 # number, matched by name), wording (names differ slightly), merged (several codes, one plan type), section (not a zone type, so
 # `headings`), uncertain (target to be confirmed). Served by GET /v1/locations as `gis_codes`.
 gis_codes:
@@ -79,6 +79,11 @@ gis_codes:
   - {layer: foci, code: "3618", key: zone_types, value: "3.6.19", note: name}
   - {layer: foci, code: "461", key: headings, value: "4.7.1", note: section}
   - {layer: foci, code: "462", key: headings, value: "4.7.1", note: section}
+  - {layer: employment, code: "3321", key: zone_types, value: "3.3.2", note: merged}
+  - {layer: employment, code: "3322", key: zone_types, value: "3.3.2", note: merged}
+  - {layer: employment, code: "3323", key: zone_types, value: "3.3.2", note: merged}
+  - {layer: employment, code: "372", key: zone_types, value: "3.7.2"}
+  - {layer: employment, code: "3616", key: zone_types, value: "3.6.16"}
 
 focus_codes:  # codes of the other map layers (focus notes) that the plan's numbering would read wrongly: the code is the plan's section number without dots, so e.g. 4831 reads as 4.8.3; layer ids as in the UI's focusLayers.ts
   - {layer: axes, code: "3619", heading: "3.6.14", note: "proposed urban street; the code reads as 3.6.19"}
