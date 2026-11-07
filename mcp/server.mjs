@@ -47,7 +47,7 @@ server.registerTool(
       "Tel Aviv master plan (תוכנית המתאר תא/5500) text search. Use for ANY question about planning provisions, building rights, zoning, land use, " +
       "planning areas (אזורי תכנון, e.g. 703) and special provisions in table 5.4 (טבלה 5.4), building regulations and plan clauses — " +
       "this is a document source, NOT map layers, so never use the map or data-exploration agent for these questions. " +
-      "Returns Hebrew plan text with citations (clause/page). Answer only from the returned text and cite it. " +
+      "Returns Hebrew plan text with citations (clause and page numbers). Answer only from the returned text and cite the clause and the page number shown for each passage. " +
       "At least one of question or a filter is required.",
     inputSchema: {
       question: z.string().optional().describe("Question in Hebrew."),
