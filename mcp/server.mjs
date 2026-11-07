@@ -58,6 +58,10 @@ server.registerTool(
     },
   },
   async ({ question, areas, zone_types, entities, headings }) => {
+    const hasFilter = [areas, zone_types, entities, headings].some((v) => v?.length);
+    if (!question?.trim() && !hasFilter) {
+      return { isError: true, content: [{ type: "text", text: "יש לציין שאלה או לפחות מסנן אחד (areas, zone_types, entities, headings)." }] };
+    }
     try {
       const r = await call("/v1/search", {
         method: "POST",
