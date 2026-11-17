@@ -48,16 +48,27 @@ server.registerTool(
       "planning areas (אזורי תכנון, e.g. 703) and special provisions in table 5.4 (טבלה 5.4), building regulations and plan clauses — " +
       "this is a document source, NOT map layers, so never use the map or data-exploration agent for these questions. " +
       "Returns Hebrew plan text with citations (clause and page numbers). Answer only from the returned text and cite the clause and the page number shown for each passage. " +
+      "If the result lists more elements of the user's selected area that were not included, answer first, then offer the user those elements; fetch them on request by passing the listed heading in headings or the chunk id to get_plan_chunk. " +
       "At least one of question or a filter is required.",
     inputSchema: {
       question: z.string().optional().describe("Question in Hebrew."),
       areas: z.array(z.string()).optional().describe('Planning-area codes, e.g. "703" or sub-area "101ה".'),
       zone_types: z.array(z.string()).optional().describe('Zone-type ids like "3.3.5", category ids like "3.3", or zone names.'),
       entities: z.array(z.string()).optional().describe('Rows of table 5.4: street/special-space code like "ר-83", or a label.'),
-      headings: z.array(z.string()).optional().describe('Chapters/sections by number ("4.3") or full title; see get_plan_contents.'),
+      headings: z.array(z.string()).optional().describe('Chapters/sections by number ("4.3"), clause id ("4.7.1(ג)") or full title; see get_plan_contents.'),
+      focus_notes: z
+        .array(z.object({
+          text: z.string(),
+          layer: z.string().optional(),
+          code: z.string().optional(),
+          priority: z.number().int().min(1).max(3).optional(),
+          weight: z.number().min(0).max(1).optional(),
+        }))
+        .optional()
+        .describe("Set by the client application from the user's map selection; do not fill in."),
     },
   },
-  async ({ question, areas, zone_types, entities, headings }) => {
+  async ({ question, areas, zone_types, entities, headings, focus_notes }) => {
     const hasFilter = [areas, zone_types, entities, headings].some((v) => v?.length);
     if (!question?.trim() && !hasFilter) {
       return { isError: true, content: [{ type: "text", text: "יש לציין שאלה או לפחות מסנן אחד (areas, zone_types, entities, headings)." }] };
@@ -65,7 +76,7 @@ server.registerTool(
     try {
       const r = await call("/v1/search", {
         method: "POST",
-        body: { question, areas, zone_types, entities, headings, context: true },
+        body: { question, areas, zone_types, entities, headings, focus_notes, context: true },
       });
       const head = `רמת התאמה: ${r.band_label ?? r.band}`;
       const missingHeadings = r.location?.headings_not_found ?? [];

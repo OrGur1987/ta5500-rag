@@ -34,10 +34,77 @@ retrieval:
   hub_in_degree: 5  # non-mandatory references are not followed out of chunks referenced this often
   budget_tokens: 6000  # cap on text added through siblings and references
   bands: {high: 0.65, medium: 0.58}  # top similarity at or above -> high / medium, else low
+  focus_max_notes: 60  # focus notes (the other map layers) used per search; the rest are ignored
+  focus_total_tokens: 9000  # target size of a whole answer; focus notes fill what the other hits left of it
+  focus_min_tokens: 1500  # but get at least this much
+  focus_max_tokens: 6000  # and at most this much; what does not fit is listed in focus_more to be asked for
+  focus_section_tokens: 1500  # a section a note points at is returned whole up to this size, else its own chunk and the 2 most similar
+  focus_per_layer: 2  # chunks the notes of one layer may add by similarity alone (notes without a plan code)
+  focus_min: 0.55  # similarity a chunk needs to a note; relevant layer notes scored 0.55-0.68, unrelated ones up to 0.54
+
+# GIS layer codes -> the /v1/search filter that reaches the same plan section. `layer`: zones = אזורי ייעוד תכנוניים (EzorYeudCode),
+# foci = מוקדי פיתוח ושימוש עירוניים (TypeCode), employment = ייעודי תעסוקה וקירוי (TypeCode). `note` marks where the layer and the plan disagree: name (code differs from the plan
+# number, matched by name), wording (names differ slightly), merged (several codes, one plan type), section (not a zone type, so
+# `headings`), uncertain (target to be confirmed). Served by GET /v1/locations as `gis_codes`.
+gis_codes:
+  - {layer: zones, code: "310", key: zone_types, value: "3.10"}
+  - {layer: zones, code: "311", key: zone_types, value: "3.11"}
+  - {layer: zones, code: "322", key: zone_types, value: "3.2.2"}
+  - {layer: zones, code: "323", key: zone_types, value: "3.2.3"}
+  - {layer: zones, code: "324", key: zone_types, value: "3.2.4"}
+  - {layer: zones, code: "325", key: zone_types, value: "3.2.5"}
+  - {layer: zones, code: "332", key: zone_types, value: "3.3.2"}
+  - {layer: zones, code: "333", key: zone_types, value: "3.3.3"}
+  - {layer: zones, code: "334", key: zone_types, value: "3.3.4"}
+  - {layer: zones, code: "341", key: zone_types, value: "3.4.1"}
+  - {layer: zones, code: "352", key: zone_types, value: "3.5.2", note: wording}
+  - {layer: zones, code: "3610", key: zone_types, value: "3.6.10"}
+  - {layer: zones, code: "3617", key: zone_types, value: "3.6.18", note: name}
+  - {layer: zones, code: "362", key: zone_types, value: "3.6.2"}
+  - {layer: zones, code: "3620", key: zone_types, value: "3.6.2", note: name}
+  - {layer: zones, code: "363", key: zone_types, value: "3.6.3", note: wording}
+  - {layer: zones, code: "364", key: zone_types, value: "3.6.4", note: wording}
+  - {layer: zones, code: "366", key: zone_types, value: "3.6.6", note: wording}
+  - {layer: zones, code: "368", key: zone_types, value: "3.6.8"}
+  - {layer: zones, code: "369", key: zone_types, value: "3.6.9"}
+  - {layer: zones, code: "382", key: zone_types, value: "3.8.2"}
+  - {layer: zones, code: "391", key: zone_types, value: "3.9", note: merged}
+  - {layer: zones, code: "392", key: zone_types, value: "3.9", note: merged}
+  - {layer: zones, code: "465", key: headings, value: "4.6", note: "section, uncertain"}
+  - {layer: foci, code: "335", key: zone_types, value: "3.3.5"}
+  - {layer: foci, code: "353", key: zone_types, value: "3.5.3"}
+  - {layer: foci, code: "354", key: zone_types, value: "3.5.4"}
+  - {layer: foci, code: "365", key: zone_types, value: "3.6.5"}
+  - {layer: foci, code: "3612", key: zone_types, value: "3.6.12"}
+  - {layer: foci, code: "3618", key: zone_types, value: "3.6.19", note: name}
+  - {layer: foci, code: "461", key: headings, value: "4.7.1", note: section}
+  - {layer: foci, code: "462", key: headings, value: "4.7.1", note: section}
+  - {layer: employment, code: "3321", key: zone_types, value: "3.3.2", note: merged}
+  - {layer: employment, code: "3322", key: zone_types, value: "3.3.2", note: merged}
+  - {layer: employment, code: "3323", key: zone_types, value: "3.3.2", note: merged}
+  - {layer: employment, code: "372", key: zone_types, value: "3.7.2"}
+  - {layer: employment, code: "3616", key: zone_types, value: "3.6.16"}
+
+focus_codes:  # codes of the other map layers (focus notes) that the plan's numbering would read wrongly: the code is the plan's section number without dots, so e.g. 4831 reads as 4.8.3; layer ids as in the UI's focusLayers.ts
+  - {layer: axes, code: "3619", heading: "3.6.14", note: "proposed urban street; the code reads as 3.6.19"}
+  - {layer: axes, code: "3623", heading: "3.6.13", note: "green axis; the code reads as 3.6.2"}
+  - {layer: axes, code: "3624", heading: "3.6.13", note: "green axis; the code reads as 3.6.2"}
+  - {layer: axes, code: "3625", heading: "3.6.13", note: "green axis; the code reads as 3.6.2"}
+  - {layer: axes, code: "613", heading: "3.6.13", note: "green axis; typo of 3613"}
+  - {layer: transport-lines, code: "3860", heading: "3.8.5", note: "light rail; numbering overflow of 385x"}
+  - {layer: transport-lines, code: "3862", heading: "3.8.5", note: "BRT; numbering overflow of 385x"}
+  - {layer: transport-lines, code: "3863", heading: "3.8.5", note: "BRT; numbering overflow of 385x"}
+  - {layer: transport-points, code: "3860", heading: "3.8.5", note: "light rail station; numbering overflow of 385x"}
+  - {layer: urban-infra-areas, code: "471", heading: "4.7", note: "green infrastructure"}
+  - {layer: urban-infra-areas, code: "472", heading: "4.8.4", note: "runoff infiltration to groundwater; uncertain"}
+  - {layer: infra-lines, code: "473", heading: "4.7.2", note: "ecological corridor"}
+  - {layer: marine-engineering, code: "ים", heading: "3.6.2", note: "no code; by the zone name"}
+  - {layer: marine-engineering, code: "נחל / תעלת ניקוז מוסדרת", heading: "4.6", note: "no code; by the zone name; uncertain"}
+  - {layer: marine-engineering, code: "שטח למתקנים הנדסיים", heading: "3.9", note: "no code; by the zone name"}
 
 labels:  # Hebrew wording for what the assistant sees; the data keeps the stable keys
   band: {high: התאמה גבוהה, medium: התאמה בינונית, low: התאמה נמוכה}
-  via: {search: חיפוש סמנטי, location: אזור תכנון, zone: אזור יעוד, general: הוראות כלליות לקטגוריית היעוד, notes: הערות לטבלה 5.4, section: המשך הטבלה או הסעיף, heading: כותרת שצוינה בשאלה, ref: הפניה}
+  via: {search: חיפוש סמנטי, location: אזור תכנון, zone: אזור יעוד, general: הוראות כלליות לקטגוריית היעוד, notes: הערות לטבלה 5.4, section: המשך הטבלה או הסעיף, heading: כותרת שצוינה בשאלה, ref: הפניה, focus_note: מיקוד לפי שכבת מפה}
   context:
     band: רמת התאמה
     low_note: ייתכן שהתכנית אינה כוללת מענה לשאלה
@@ -45,6 +112,9 @@ labels:  # Hebrew wording for what the assistant sees; the data keeps the stable
     zones: אזורי יעוד
     no_record: אזורי תכנון שאינם מופיעים בטבלה 5.4 (אין הוראות מיוחדות)
     omitted: לא הוחזרו מטעמי גודל (ניתן להביא לפי מזהה)
+    focus_more: נוספים בתחום הנבחר שלא הוחזרו מטעמי גודל (ניתן לבקש לפי כותרת או מזהה)
+    by_heading: כותרת
+    by_id: מזהה
     entities_missing: ישויות שלא נמצאו בטבלה 5.4
     page: עמוד
     pages: עמודים

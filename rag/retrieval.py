@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from rag import config
-from rag.embed import embed, embed_query, load_index
+from rag.embed import EmbeddingError, embed, embed_query, load_index, normalize_for_embedding
 from rag.tree import in_subtree
 
 QUOTES = re.compile(r"[\"'׳״`]")
@@ -25,13 +25,15 @@ MIN_ENTITY_NAME = 6  # shortest row label looked for in free text
 HEADING_REF = re.compile(r"(?<![א-ת])[הוכלבמש]{0,2}(?:פרק|סעיפים|סעיף)\s+(\d+(?:\.\d+)*)")
 STREET_CODE = re.compile(r"(?<![א-ת])ר\s*[-־–]\s*(\d+)")
 STREET_PREFIX = re.compile(r"^(?:רחוב|רח)\s")
-ZONE_TYPE_ID = re.compile(r"^3\.[2-7]\.\d+$")
+ZONE_TYPE_ID = re.compile(r"^3\.(?:[2-9]|1[0-2])\.\d+$")
 CATEGORY_ID = re.compile(r"^3\.\d+$")
 NUMBERED = re.compile(r"^\d+(\.\d+)*$")
+CLAUSE_ID = re.compile(r"^\d+(?:\.\d+)*(?:\([^()]+\))+$")
+CLAUSE_LABEL = re.compile(r"\([^()]+\)$")
 HEB_PREFIXES = "בלהוכמש"
 LONG_DASHES = str.maketrans({"–": "-", "—": "-"})
 MIN_TITLE = 4
-VIAS = {"location": 0, "zone": 0, "search": 1, "section": 2, "ref": 3}
+VIAS = {"location": 0, "zone": 0, "search": 1, "section": 2, "ref": 3, "focus_note": 4}
 FOLLOWERS = ("general", "notes")  # shown right after the hits they qualify, whatever their own score
 
 
@@ -64,12 +66,14 @@ class Result:
     band: str  # high / medium / low
     band_label: str  # the same in Hebrew, for the assistant
     omitted: list[dict] = field(default_factory=list)  # chunk_id, citation, tokens of zone chunks left out for size
+    focus_more: list[dict] = field(default_factory=list)  # what map-layer notes point at but did not fit: heading or chunk ids to ask for
 
 
 class Retriever:
     def __init__(self, out_dir: Path, model_key: str | None = None):
         self.m = config.model(model_key)
         self.cfg = config.RETRIEVAL
+        self._note_cache: dict[str, np.ndarray] = {}
         self.chunks, self.matrix = load_index(out_dir / "chunks.parquet", out_dir / f"embeddings_{self.m['name']}.parquet")
         nodes = pd.read_parquet(out_dir / "nodes.parquet")
         ids = self.chunks.index
@@ -81,15 +85,17 @@ class Retriever:
         self.by_section = self.chunks.groupby("section_id").groups
         self._index_zone_types(nodes)
         self._index_headings(nodes)
+        self.focus_overrides = {(e["layer"], str(e["code"])): e["heading"] for e in config.FOCUS_CODES}
         self._index_areas()
         self._index_entities()
 
     # ---- gazetteers ---------------------------------------------------------------------------
 
     def _index_zone_types(self, nodes: pd.DataFrame) -> None:
-        """Zone types are the sub-sections of 3.2-3.7 plus every category without such sub-sections (3.8-3.12).
+        """Zone types are the sub-sections of 3.2-3.12 plus every category without such sub-sections.
 
-        Categories are the sections 3.2-3.12; a category id as a filter stands for all its types.
+        Categories are the sections 3.2-3.12; a category id as a filter stands for all its types. A title shorter than
+        MIN_TITLE (e.g. 'ים') is a type by id but is not looked for in free text.
         """
         names = dict(zip(nodes["id"], nodes["title"]))
         categories = {i: norm(t) for i, t in names.items() if CATEGORY_ID.match(i) and 2 <= int(i[2:]) <= 12}
@@ -98,7 +104,7 @@ class Retriever:
             if not any(i.startswith(f"{c}.") for i in types):
                 types[c] = title
         titles = {t: i for i, t in types.items() if len(t) >= MIN_TITLE}
-        self.zone_title = {i: names[i] for i in titles.values()}
+        self.zone_title = {i: names[i] for i in types}
         self.zone_category_title = {c: names[c] for c in categories}
         self.zone_members = {c: [i for i in self.zone_title if i == c or i.startswith(f"{c}.")] for c in categories}
         self.zone_patterns = [
@@ -125,6 +131,9 @@ class Retriever:
         self.heading_children = {i: [c for c in children[i] if c in titles] for i in titles}
         self.heading_scope = {i: [cid for cid, ns in self.chunks["node_ids"].items() if any(in_subtree(n, i) for n in ns)]
                               for i in titles}
+        # a clause id names the chunk that holds it (small sibling clauses share a chunk)
+        self.clause_nodes = {n for n in self.owner if CLAUSE_ID.match(n)}
+        self.heading_scope.update({n: [self.owner[n]] for n in self.clause_nodes})
 
     def _index_areas(self) -> None:
         records = self.chunks[self.chunks["area"].notna()]
@@ -244,10 +253,10 @@ class Retriever:
         return found
 
     def resolve_heading(self, value: str) -> str | None:
-        """Node id of a chapter or section named by a filter value: its number ('4.3', 'סעיף 4.3') or its full title."""
+        """Node id of a chapter, section or clause named by a filter value: its number ('4.3', 'סעיף 4.7.1(ג)') or a full title."""
         key = norm(BIDI.sub("", str(value)))
-        m = re.fullmatch(r"(?:(?:פרק|סעיף)\s*)?(\d+(?:\.\d+)*)", key)
-        return m[1] if m and m[1] in self.heading_nodes else self.heading_by_title.get(key)
+        m = re.fullmatch(r"(?:(?:פרק|סעיף)\s*)?(\d+(?:\.\d+)*(?:\([^()]+\))*)", key)
+        return m[1] if m and (m[1] in self.heading_nodes or m[1] in self.clause_nodes) else self.heading_by_title.get(key)
 
     def heading_citation(self, node: str) -> str:
         c = config.LABELS["citation"]
@@ -284,7 +293,7 @@ class Retriever:
                     "children": [] if d == 1 else [build(c, d and d - 1) for c in self.heading_children[n]]}
         if node is None:
             return [build(i, depth) for i in sorted((i for i in self.heading_nodes if i.isdigit()), key=int)]
-        if not (root := self.resolve_heading(node)):
+        if not (root := self.resolve_heading(node)) or root not in self.heading_nodes:
             raise ValueError(f"unknown heading: {node}")
         return [build(root, depth)]
 
@@ -367,6 +376,10 @@ class Retriever:
         if len(sections) > 1:  # a chunk that merged neighbouring sections
             listed = ", ".join(sections) if len(sections) <= 3 else f"{sections[0]} - {sections[-1]}"
             return f"{c['sections']} {listed}"
+        clauses = [n for n in row["node_ids"] if not any(n.startswith(f"{o}(") for o in row["node_ids"])]  # top-level clauses
+        parents = {CLAUSE_LABEL.sub("", n) for n in clauses}
+        if not numbered and len(clauses) > 1 and len(parents) == 1 and all(CLAUSE_LABEL.search(n) for n in clauses):  # small sibling clauses merged into one chunk
+            return f"{c['section']} {parents.pop()}{CLAUSE_LABEL.search(clauses[0])[0]}-{CLAUSE_LABEL.search(clauses[-1])[0]}"
         return f"{c['chapter'] if base.isdigit() else c['section']} {base}"
 
     def context(self, result: Result) -> str:
@@ -394,6 +407,10 @@ class Retriever:
             blocks.append(f"[{n}] {' | '.join(x for x in (h['citation'], pages, via) if x)}\n{title}\n{row['text']}")
         if result.omitted:
             blocks.append(f"{t['omitted']}: " + "; ".join(f"{o['citation']} ({o['chunk_id']})" for o in result.omitted))
+        if result.focus_more:
+            lines = [f"- {'; '.join(m['labels'])} → {m['citation']} [{t['by_heading']} {m['heading']}]" if m["heading"]
+                     else f"- {'; '.join(m['labels'])} → {m['citation']} [{t['by_id']} {m['chunk_ids'][0]}]" for m in result.focus_more]
+            blocks.append(f"{t['focus_more']}:\n" + "\n".join(lines))
         return "\n\n".join(blocks).translate(LONG_DASHES)
 
     # ---- search -------------------------------------------------------------------------------
@@ -408,10 +425,11 @@ class Retriever:
         return pd.Series(self.matrix @ q, index=self.chunks.index)
 
     def search(self, query: str | None = None, areas: list[str] | None = None, zone_types: list[str] | None = None,
-               entities: list[str] | None = None, headings: list[str] | None = None) -> Result:
+               entities: list[str] | None = None, headings: list[str] | None = None, focus_notes: list[dict] | None = None) -> Result:
         """Without a question, filters alone are searched with the generic question (a plan border from the GIS).
 
         A zone scope too large to return whole is cut to its most similar chunks, unless there is no question to rank by.
+        `focus_notes` (text, layer, code, priority, weight) bring in plan text for the other map layers after all other hits.
         """
         filter_only = not query
         if filter_only:
@@ -452,6 +470,8 @@ class Retriever:
         self._add_table_notes(hits, add)
         self._add_fragments(hits, add)
         self._expand(hits, add, scores)
+        more: list[dict] = []
+        self._add_focus_notes(hits, add, focus_notes, more)
         first = {"location", "zone", "heading"} if loc["source"] == "filters" else {"zone", "heading"}  # a zone or heading named by title ranks high
         heads = [h for h in hits.values() if h["via"] == "heading"]  # a named heading starts the answer
         ordered = sorted((h for h in hits.values() if h["via"] not in FOLLOWERS and h not in heads),
@@ -471,14 +491,15 @@ class Retriever:
         omitted = [{"chunk_id": c, "citation": self.citation(c), "tokens": int(self.chunks.at[c, "tokens"])}
                    for c in dict.fromkeys(capped) if c not in hits]
         band = "high" if structural else next(b for b in ("high", "medium", "low") if b == "low" or top >= cfg["bands"][b])
-        return Result(ordered, loc, top, band, config.LABELS["band"][band], omitted)
+        return Result(ordered, loc, top, band, config.LABELS["band"][band], omitted, more)
 
     def _add_records(self, add, scores: pd.Series, loc: dict, ranked: bool = True) -> None:
-        """Table 5.4 records: per planning area those of the requested zone types, else the most similar ones.
+        """Table 5.4 records: per planning area the rows it names, those of the requested zone types, else the most similar ones.
 
-        Requested entities (`loc["entity_records"]`) narrow the area's records to their own rows, and are added
-        even when no area is given. `ranked` is False when there is no question, so similarity picks nothing: the
-        area's whole table stands in for records of the requested zone types.
+        Requested sub-areas and entities (`loc["entity_records"]`) name rows of an area; they are always returned,
+        and the area's rows of the requested zone types come beside them. Without named rows only the zone-type rows
+        are returned, else the most similar ones. Entity rows are added even when no area is given. `ranked` is False
+        when there is no question, so similarity picks nothing: the area's whole table stands in for the zone-type rows.
         """
         cfg = self.cfg
         forced = loc["entity_records"]
@@ -490,18 +511,141 @@ class Retriever:
                     add(cid, "search")
             return
         wanted = set(loc["zone_types"])
+        zone = self.chunks["zone"].fillna("").str.replace(r"[\s\"'׳״]", "", regex=True)
         for area in loc["areas"]:
             pool = self.plan_record & (self.chunks["area"] == area)
-            for sub in (s for s in loc["subareas"] if s.startswith(area)):
-                narrowed = pool & self.chunks["zone"].fillna("").str.replace(r"[\s\"'׳״]", "", regex=True).str.startswith(sub)
-                pool = narrowed if narrowed.any() else pool
-            narrowed = pool & pool.index.isin(forced)
-            pool = narrowed if narrowed.any() else pool
-            matched = [cid for cid in pool.index[pool] if self.record_zones.get(cid, set()) & wanted]
-            for cid in matched or (scores[pool].nlargest(cfg["records_k"]).index if ranked else pool.index[pool]):
+            named = pool & pool.index.isin(forced)
+            subs = [s for s in loc["subareas"] if s.startswith(area)]
+            if subs:
+                named |= pool & pd.concat([zone.str.startswith(s) for s in subs], axis=1).any(axis=1)
+            by_zone = [cid for cid in pool.index[pool] if self.record_zones.get(cid, set()) & wanted]
+            if named.any():
+                rows = [*named.index[named], *(cid for cid in by_zone if not named[cid])]
+            else:
+                rows = by_zone or (scores[pool].nlargest(cfg["records_k"]).index if ranked else pool.index[pool])
+            for cid in rows:
                 add(cid, "location")
         for cid in forced:  # entity rows outside the requested areas
             add(cid, "location")
+
+    def _note_vectors(self, texts: list[str]) -> np.ndarray:
+        """Vectors of note texts; the ones not seen before go to the embedding server in one request."""
+        missing = [t for t in dict.fromkeys(texts) if t not in self._note_cache]
+        if missing:
+            if len(self._note_cache) > 2000:
+                self._note_cache.clear()
+            vectors = embed([normalize_for_embedding(self.m["query_prefix"] + t) for t in missing], self.m["name"])
+            self._note_cache.update(zip(missing, vectors))
+        return np.vstack([self._note_cache[t] for t in texts])
+
+    @staticmethod
+    def _section_splits(digits: str) -> list[str]:
+        """Every way to read a digit string as a dotted section number: a one-digit chapter, then parts of one or two digits."""
+        def parts(rest: str):
+            if not rest:
+                yield []
+            for n in (1, 2):
+                if rest and len(rest) >= n and rest[0] != "0":
+                    for tail in parts(rest[n:]):
+                        yield [rest[:n], *tail]
+        return [".".join([digits[0], *p]) for p in parts(digits[1:])] if len(digits) > 1 else [digits]
+
+    def resolve_note_section(self, layer: str | None, code: str | None) -> str | None:
+        """The plan section a map layer's code points at: an override first, else the digits read as a section number.
+
+        The layers number their features with the plan's section numbers without dots, and the digits after the section
+        are an item inside it (4831 is item 1 of 4.8.3), so the longest prefix that is a section wins.
+        """
+        code = re.sub(r"\s+", " ", str(code or "")).strip()
+        if (layer, code) in self.focus_overrides:
+            override = self.focus_overrides[(layer, code)]
+            return override if override in self.heading_nodes else None
+        if not code.isdigit():
+            return None
+        for length in range(len(code), 0, -1):
+            found = [s for s in self._section_splits(code[:length]) if s in self.heading_nodes]
+            if found:
+                return max(found, key=lambda s: s.count("."))
+        return None
+
+    def _add_focus_notes(self, hits: dict, add, notes: list[dict] | None, more: list[dict]) -> None:
+        """Plan text for the other map layers, added after every other hit so it never displaces one.
+
+        A note whose code names a plan section brings that section (whole if small, else its own chunk and the two most
+        similar); notes on the same section are served together. A note without a section brings the chunks most similar
+        to its text (`focus_min`, `focus_per_layer`). Units go by priority, then overlap weight, until the budget is
+        spent: `focus_total_tokens` less what the other hits took, between `focus_min_tokens` and `focus_max_tokens`.
+        What does not fit is listed in `more` (a heading or chunk ids) for the assistant to ask for. Table 5.4 records
+        are reached by planning area, not by similarity.
+        """
+        cfg = self.cfg
+        notes = sorted((n for n in notes or [] if n["text"].strip()), key=lambda n: (n["priority"], -n["weight"]))[:cfg["focus_max_notes"]]
+        if not notes:
+            return
+        used = sum(h["tokens"] for h in hits.values())
+        budget = min(cfg["focus_max_tokens"], max(cfg["focus_min_tokens"], cfg["focus_total_tokens"] - used))
+        eligible = ~self.plan_record.to_numpy()
+        packs: dict[str, dict] = {}
+        units = []
+        for j, note in enumerate(notes):
+            section = self.resolve_note_section(note.get("layer"), note.get("code"))
+            if section in packs:
+                packs[section]["notes"].append(j)
+                packs[section]["weight"] = max(packs[section]["weight"], note["weight"])
+                continue
+            units.append(unit := {"section": section, "notes": [j], "priority": note["priority"], "weight": note["weight"]})
+            if section:
+                packs[section] = unit
+        units.sort(key=lambda u: (u["priority"], -u["weight"]))
+
+        large = lambda section: self.chunks.loc[self.heading_scope[section], "tokens"].sum() > cfg["focus_section_tokens"]
+        need = [j for u in units for j in u["notes"] if not u["section"] or large(u["section"])]
+        columns: dict[int, np.ndarray] = {}
+        if need:  # similarity only ranks the chunks of a large section, or finds chunks for a note without a code
+            try:
+                columns = dict(zip(need, (self.matrix @ self._note_vectors([notes[j]["text"] for j in need]).T).T))
+            except EmbeddingError:
+                pass  # notes are soft: without vectors a large section gives its own chunk and a note without a code adds nothing
+        nothing = np.zeros(len(self.chunks), dtype=np.float32)
+        sim = lambda j: columns.get(j, nothing)  # similarity of every chunk to note j
+        index = self.chunks.index
+        label = config.LABELS["via"]["focus_note"]
+        spent, per_layer = 0, Counter()
+        for unit in units:
+            js = unit["notes"]
+            layers = list(dict.fromkeys(notes[j].get("layer") or "" for j in js))
+            texts = [notes[j]["text"][:120] for j in js]
+            if unit["section"]:
+                scope = self.heading_scope[unit["section"]]
+                if self.chunks.loc[scope, "tokens"].sum() <= cfg["focus_section_tokens"]:
+                    picked = list(scope)
+                else:
+                    own = [c for c in (self.owner.get(unit["section"]),) if c]
+                    rest = [c for c in scope if c not in own]
+                    best = np.max([sim(j)[[index.get_loc(c) for c in rest]] for j in js], axis=0) if rest else []
+                    picked = [*own, *(rest[i] for i in np.argsort(-np.asarray(best))[:2])]
+            else:
+                column = sim(js[0])
+                found = np.flatnonzero(eligible & (column >= cfg["focus_min"]))
+                layer = layers[0]
+                room = max(0, cfg["focus_per_layer"] - per_layer[layer])
+                picked = [index[i] for i in found[np.argsort(-column[found])][:room]]
+                per_layer[layer] += len(picked)
+            skipped = []
+            for cid in picked:
+                if cid in hits:
+                    continue
+                tokens = int(self.chunks.at[cid, "tokens"])
+                if spent + tokens > budget:
+                    skipped.append(cid)
+                    continue
+                add(cid, "focus_note", score=float(max(sim(j)[index.get_loc(cid)] for j in js)),
+                    reason=f"{label}: {'; '.join(texts[:3])}")
+                spent += tokens
+            if skipped and len(more) < cfg["focus_max_notes"]:
+                more.append({"heading": unit["section"], "chunk_ids": skipped, "layers": [l for l in layers if l], "labels": texts[:5],
+                             "citation": self.heading_citation(unit["section"]) if unit["section"] else self.citation(skipped[0]),
+                             "chunks": len(skipped), "tokens": int(self.chunks.loc[skipped, "tokens"].sum())})
 
     def _add_table_notes(self, hits: dict, add) -> None:
         """Any table 5.4 record brings the notes that precede the table and qualify its values."""

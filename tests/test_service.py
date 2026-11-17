@@ -51,6 +51,12 @@ def test_followed_references_name_the_citation_they_came_from(client):
 
 def test_a_request_with_neither_question_nor_filters_is_rejected(client):
     assert client.post("/v1/search", json={}).status_code == 422
+    note = {"text": "שכבה: מדרגות גובה - 5"}
+    assert client.post("/v1/search", json={"focus_notes": [note]}).status_code == 422  # notes are not a filter
+    assert client.post("/v1/search", json={"question": "שאלה", "focus_notes": [{**note, "priority": 0}]}).status_code == 422
+    assert client.post("/v1/search", json={"question": "שאלה", "focus_notes": [note]}).status_code == 200
+    coded = client.post("/v1/search", json={"question": "שאלה", "focus_notes": [{**note, "code": "382"}]}).json()
+    assert coded["focus_more"] == [] and any(h["via"] == "focus_note" for h in coded["hits"])
 
 
 def test_api_key_is_required_when_configured(ret, monkeypatch):
@@ -75,11 +81,13 @@ def test_embedding_outage_is_a_503_and_health_reports_it(ret, monkeypatch):
 def test_locations_list_what_the_filters_accept(client):
     body = client.get("/v1/locations").json()
     assert {"code": "703", "name": "מבואות יפו"} in body["areas"]
-    assert [s["code"] for s in body["subareas"]] == ["502ב", "703ה"]
+    assert [s["code"] for s in body["subareas"]] == ["502ב", "703ה", "703ו"]
     assert {"id": "3.3.5", "title": "מוקד תעסוקה חדש", "category": "3.3"} in body["zone_types"]
     assert {"id": "3.4.2", "title": "ציר מעורב", "category": "3.4"} in body["zone_types"]
     assert {"id": "3.3", "title": "אזורי תעסוקה"} in body["zone_categories"]
-    assert client.get("/health").json()["chunks"] == 19
+    assert {"layer": "foci", "code": "335", "key": "zone_types", "value": "3.3.5", "title": "מוקד תעסוקה חדש", "note": ""} in body["gis_codes"]
+    assert next(g for g in body["gis_codes"] if g["code"] == "3617")["note"] == "name"  # the layer's code differs from the plan number
+    assert client.get("/health").json()["chunks"] == 23
     street = next(e for e in body["entities"] if e["code"] == "ר-83")
     assert (street["type"], street["label"], street["areas"]) == ("street", "ר-83 רחוב בן צבי", ["703", "502"])
     found = client.post("/v1/search", json={"entities": ["ר־83", "ר-99"]}).json()["location"]

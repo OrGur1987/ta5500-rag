@@ -25,6 +25,14 @@ class Utf8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"  # clients such as Windows PowerShell 5 assume Latin-1 without it
 
 
+class FocusNote(BaseModel):
+    text: str = Field(min_length=2, max_length=300, description="What the map selection holds in one layer, e.g. 'שכבה: מדרגות גובה בינוי - מדרגה 5'. It is embedded and searched on its own.")
+    layer: str | None = Field(None, max_length=80, description="The layer's id or name, shown in the reason of the chunks the note adds.")
+    code: str | None = Field(None, max_length=120, description="The feature's code in the layer, when the layer numbers its features with the plan's section numbers (4831 = item 1 of 4.8.3); it is resolved to a plan section, with overrides for known mistakes. Without a code, the text is searched by similarity.")
+    priority: int = Field(2, ge=1, le=3, description="1 = more important. Notes of a lower number are served first.")
+    weight: float = Field(1.0, ge=0, le=1, description="Share of the selection the layer covers (overlap); ranks notes of the same priority.")
+
+
 class SearchRequest(BaseModel):
     question: str | None = Field(
         None, description="The user's question in Hebrew. May be left out when filters are given, e.g. a plan "
@@ -50,6 +58,10 @@ class SearchRequest(BaseModel):
                           "document order). `GET /v1/contents` lists the headings to name.",
         examples=[["4.3"]])
     context: bool = Field(True, description="Also return `context`, the ready-made Hebrew text block for the assistant.")
+    focus_notes: list[FocusNote] | None = Field(
+        None, max_length=50, description="What a map selection intersects in layers that are not filters. Chunks similar to the notes are added "
+                                         "after all other hits (`via` focus_note), within a small budget, so they never displace the "
+                                         "filter results. Not counted as a filter: a request needs a question or a filter. An empty list counts as not given.")
 
 
 class Location(BaseModel):
@@ -78,7 +90,7 @@ class Chunk(BaseModel):
 
 class Hit(Chunk):
     score: float = Field(description="Cosine similarity to the question (0-1); not a probability.")
-    via: str = Field(description="Why it was returned: search, location, zone, general (general instructions of the zone category), notes (notes of table 5.4), section or ref.")
+    via: str = Field(description="Why it was returned: search, location, zone, general (general instructions of the zone category), notes (notes of table 5.4), section, ref or focus_note (similar to a map layer's note).")
     reason: str = Field(description="`via` in Hebrew.")
     followed_from: str | None = Field(None, description="Citation of the hit this one was reached from (via section/ref).")
     mandatory: bool | None = Field(None, description="For ref hits: the reference is worded as binding.")
@@ -87,6 +99,16 @@ class Hit(Chunk):
 class Omitted(BaseModel):
     chunk_id: str
     citation: str
+    tokens: int
+
+
+class FocusMore(BaseModel):
+    heading: str | None = Field(description="Section id to ask for with the `headings` filter; null for a chunk the notes found by similarity.")
+    chunk_ids: list[str] = Field(description="The chunks left out; GET /v1/chunk fetches one.")
+    layers: list[str]
+    labels: list[str] = Field(description="The note texts that point at it (the first few).")
+    citation: str
+    chunks: int
     tokens: int
 
 
@@ -112,6 +134,9 @@ class SearchResponse(BaseModel):
         description="Chunks of a requested zone type (or its general instructions) left out because the section is "
                     "large and a question ranked the rest. Fetch them with GET /v1/chunk when relevant.")
     context: str | None = None
+    focus_more: list[FocusMore] = Field(
+        [], description="What the focus notes point at but did not fit the size budget. Ask for it with search_plan(headings=[heading]) "
+                        "or GET /v1/chunk (chunk_ids), and tell the user what else they can look into.")
 
 
 class Entity(BaseModel):
@@ -120,6 +145,15 @@ class Entity(BaseModel):
     label: str = Field(description="The row's first column, as written in the plan.")
     areas: list[str] = Field(description="Planning areas whose table has this row.")
     rows: int = Field(description="How many rows of table 5.4 a filter by this entity returns (every row whose label contains it).")
+
+
+class GisCode(BaseModel):
+    layer: str = Field(description="The GIS layer the code belongs to: zones (EzorYeudCode) or foci (TypeCode).")
+    code: str
+    key: str = Field(description="The /v1/search filter to put `value` in: zone_types or headings.")
+    value: str
+    title: str = Field(description="The plan's title for `value`; empty when the index has no such section.")
+    note: str = Field(description="Where the GIS layer and the plan disagree (name, wording, merged, section, uncertain); empty when they agree.")
 
 
 class LocationsResponse(BaseModel):
@@ -132,6 +166,8 @@ class LocationsResponse(BaseModel):
         description="Zone types (the sub-sections of chapter 3): id, title and `category`, the id of its category.")
     zone_categories: list[dict[str, str]] = Field(
         description="The chapter-3 categories (3.2-3.12). A category id as a `zone_types` filter stands for all its types.")
+    gis_codes: list[GisCode] = Field(
+        description="How codes of the plan's GIS layers map to filters: put `value` in the `key` filter of /v1/search.")
 
 
 def _page(value) -> int | None:
@@ -195,7 +231,8 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
     def search(req: SearchRequest):
         ret: Retriever = app.state.retriever
         try:
-            result = ret.search(req.question, req.areas or None, req.zone_types or None, req.entities or None, req.headings or None)
+            result = ret.search(req.question, req.areas or None, req.zone_types or None, req.entities or None, req.headings or None,
+                                [n.model_dump() for n in req.focus_notes or []] or None)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         except EmbeddingError as e:
@@ -209,7 +246,7 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
         return SearchResponse(
             band=result.band, band_label=result.band_label, top_score=result.top_score,
             location=Location(**{k: result.location[k] for k in Location.model_fields}), hits=hits,
-            omitted=result.omitted, context=ret.context(result) if req.context else None)
+            omitted=result.omitted, context=ret.context(result) if req.context else None, focus_more=result.focus_more)
 
     @app.get("/v1/chunk", response_model=Chunk, dependencies=[Depends(check_key)],
              summary="Fetch one chunk by the id given in a search response (hits or omitted)")
@@ -239,6 +276,8 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
         areas = ret.chunks.loc[ret.chunks["area"].notna(), ["area", "area_name"]].drop_duplicates("area").sort_values("area")
         by_id = lambda kv: [int(p) for p in kv[0].split(".")]
         found = lambda *texts: not q or norm(q) in norm(" ".join(texts))  # the resolver: names that contain the phrase
+        titles = {"zone_types": {**ret.zone_category_title, **ret.zone_title}, "headings": ret.heading_title}
+        gis = [GisCode(**{"note": "", **g}, title=titles[g["key"]].get(g["value"], "")) for g in config.GIS_CODES]
         return LocationsResponse(
             areas=[{"code": a, "name": n or ""} for a, n in areas.itertuples(index=False) if found(a, n or "")],
             subareas=[s for s in ret.subareas if found(s["code"], s["name"])],
@@ -246,7 +285,8 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
                 ret.entities.values(), key=lambda e: (e["type"], e["code"] or "~", e["label"])) if found(e["code"], e["label"])],
             zone_types=[{"id": i, "title": t, "category": next((c for c, m in ret.zone_members.items() if i in m), "")}
                         for i, t in sorted(ret.zone_title.items(), key=by_id) if found(i, t)],
-            zone_categories=[{"id": c, "title": t} for c, t in sorted(ret.zone_category_title.items(), key=by_id) if found(c, t)])
+            zone_categories=[{"id": c, "title": t} for c, t in sorted(ret.zone_category_title.items(), key=by_id) if found(c, t)],
+            gis_codes=[g for g in gis if found(g.code, g.value, g.title)])
 
     return app
 
