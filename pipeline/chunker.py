@@ -193,7 +193,9 @@ class Chunker:
     def chunks(self) -> pd.DataFrame:
         """Chunks per chapter, never merged across chapters."""
         pieces = [p for c in self.nodes["root"]["children"] for p in self.pieces(c)]
-        return pd.DataFrame([self._record(p) for p in pieces])
+        # nb_changed: add `seq`, the 0-based position of the chunk in document order (Word start to end), so a chunk can
+        # be placed after chunk X and before chunk Y. `pieces` is already in document order, so enumerate gives it.
+        return pd.DataFrame([{"seq": i, **self._record(p)} for i, p in enumerate(pieces)])
 
 
 def report(df: pd.DataFrame, max_tokens: int, min_tokens: int) -> None:

@@ -1,0 +1,497 @@
+<!doctype html>
+<!-- nb_changed: new file. Demo page that shows the plan PDF next to the chunks of bundle/chunks_seq_num_bbox.parquet
+     (exported to chunks.json). Pick a chunk (by sequence number, PDF page, all chunks of a page, chunk id or section)
+     and the PDF jumps to its page, highlights its bounding box(es) and shows its text and metadata.
+     Nothing here is part of the service or the pipeline; start it with `python -m http.server` (see README.txt).
+     nb_changed 2026-11-12: compares two versions of the boxes. Version 1 = chunks.json (bundle/chunks_seq_num_bbox.parquet,
+     box sized to each chunk's own text); version 2 = chunks_v2.json (bundle/chunks_seq_num_bbox_1.parquet, fixed X per
+     page, only Y varies, no overlap). A "boxes" switch in the toolbar shows version 1, version 2 or both (?boxes=1|2|both).
+     nb_changed 2026-11-17: a third version. Version 3 = chunks_v3.json (bundle/chunks_seq_num_bbox_2.parquet, like v2 but
+     one X range per page orientation, taken from the widest page of that orientation). The switch is now one toggle per
+     version (v1, v2, v3) plus "all"; ?boxes= takes a list such as 1,3, or all, or none (1, 2 and both still work).
+     nb_changed 2026-11-17: a sixth version. Version 6 = chunks_v6.json (bundle/chunks_seq_num_bbox_5.parquet, v5 plus a second
+     look at every estimated chunk: shorter end snippets, next-chunk end, table rows / subsections placed by their own text).
+     nb_changed 2026-11-17: a fifth version. Version 5 = chunks_v5.json (bundle/chunks_seq_num_bbox_4.parquet, v4 plus better
+     boxes around table-5.4 rows: a row starts at its own cells, so the estimates next to it shrink).
+     nb_changed 2026-11-17: a fourth version. Version 4 = chunks_v4.json (bundle/chunks_seq_num_bbox_3.parquet, the v3 boxes
+     but with better matching of table rows and of chunks that start with "(א)", so far fewer boxes are only estimated). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chunk locator</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #1c2330; --muted: #5b6678; --line: #d9dde5; --accent: #1f5fbf;
+    --accent-ink: #ffffff; --sel: #ff6a00;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  /* three columns: controls and list | PDF | chunk text and metadata */
+  .app { display: grid; grid-template-columns: 300px minmax(0, 1fr) 390px; height: 100vh; gap: 8px; padding: 8px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: auto; min-height: 0; }
+  .pad { padding: 12px; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  h2 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  button, select, input { font: inherit; }
+  button { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  input, select { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; width: 100%; background: #fff; color: var(--ink); }
+  .row { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+  .row > * { flex: 0 0 auto; } .row > input, .row > select { flex: 1 1 auto; width: auto; min-width: 0; }
+  .hint { color: var(--muted); font-size: 12px; margin: 4px 0; }
+  .list { margin-top: 8px; border-top: 1px solid var(--line); }
+  .item { display: flex; gap: 8px; align-items: baseline; padding: 6px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .item:hover { background: #eef3fb; } .item.sel { background: #fff1e6; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 12px; align-self: center; border: 1px solid rgba(0,0,0,.25); }
+  .seq { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 34px; }
+  .cid { font-weight: 600; } .kind { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+  /* PDF column */
+  .pdfcol { display: flex; flex-direction: column; min-height: 0; }
+  .toolbar { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .toolbar input { width: 64px; text-align: center; }
+  .spacer { flex: 1 1 auto; }
+  #viewer { flex: 1 1 auto; overflow: auto; background: #8a93a3; min-height: 0; }
+  #pageWrap { position: relative; margin: 14px auto; width: max-content; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+  #pageWrap canvas { display: block; }
+  #overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
+  .box { position: absolute; pointer-events: auto; cursor: pointer; border-style: solid; border-width: 2px; border-radius: 2px; }
+  .box.est { border-style: dashed; }
+  .box.sel { border-width: 4px; z-index: 5; }
+  .tag { position: absolute; left: -2px; top: -18px; padding: 0 5px; height: 17px; line-height: 17px; font-size: 11px; color: #fff;
+         border-radius: 3px 3px 0 0; white-space: nowrap; pointer-events: none; }
+  .box.top .tag { top: auto; bottom: -18px; border-radius: 0 0 3px 3px; }
+  /* nb_changed 2026-11-12: version 1 drawn next to version 2 ("both"): dotted outline, no fill, not clickable, tag below */
+  /* nb_changed 2026-11-17: any version that is not the top-most one shown is a ghost (no fill, not clickable). With more
+     than one version shown ("multi") the line style tells them apart: v1 dotted, v2 solid (dashed when estimated), v3 double. */
+  .box.ghost { border-width: 3px; pointer-events: none; }
+  .box.ghost .tag { top: auto; bottom: -18px; border-radius: 0 0 3px 3px; }
+  .box.multi.v1 { border-style: dotted; border-width: 3px; }
+  .box.multi.v3 { border-style: double; border-width: 5px; }
+  /* nb_changed 2026-11-17: v4 is drawn as a thick grooved line (and is above v3) so it can be told apart from v1-v3 */
+  .box.multi.v4 { border-style: groove; border-width: 6px; }
+  /* nb_changed 2026-11-17: v5 is drawn as a thick ridged line (and is above v4) */
+  .box.multi.v5 { border-style: ridge; border-width: 7px; }
+  /* nb_changed 2026-11-17: v6 is drawn as a thick outset line (and is above v5) */
+  .box.multi.v6 { border-style: outset; border-width: 8px; }
+  /* nb_changed 2026-11-17: the two z-index lines below were replaced by the ones after them, which add v6 (old lines kept)
+  .box.v1 { z-index: 1; } .box.v2 { z-index: 2; } .box.v3 { z-index: 3; } .box.v4 { z-index: 4; } .box.v5 { z-index: 5; }
+  .box.sel.v1 { z-index: 6; } .box.sel.v2 { z-index: 7; } .box.sel.v3 { z-index: 8; } .box.sel.v4 { z-index: 9; } .box.sel.v5 { z-index: 10; }
+  */
+  .box.v1 { z-index: 1; } .box.v2 { z-index: 2; } .box.v3 { z-index: 3; } .box.v4 { z-index: 4; } .box.v5 { z-index: 5; } .box.v6 { z-index: 6; }
+  .box.sel.v1 { z-index: 7; } .box.sel.v2 { z-index: 8; } .box.sel.v3 { z-index: 9; } .box.sel.v4 { z-index: 10; } .box.sel.v5 { z-index: 11; } .box.sel.v6 { z-index: 12; }
+  .boxsw { display: inline-flex; gap: 0; } .boxsw button { border-radius: 0; } .boxsw button:first-child { border-radius: 6px 0 0 6px; }
+  .boxsw button:last-child { border-radius: 0 6px 6px 0; } .boxsw button:disabled { opacity: .45; cursor: not-allowed; }
+  #status { padding: 6px 10px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+  #status.err { color: #b3261e; font-weight: 600; }
+  /* chunk details column */
+  .text { white-space: pre-wrap; border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: #fafbfc; max-height: 38vh; overflow: auto; unicode-bidi: plaintext; }
+  table.meta { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.meta td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.meta td:first-child { color: var(--muted); width: 108px; white-space: nowrap; }
+  .badge { display: inline-block; padding: 0 7px; border-radius: 10px; font-size: 12px; background: #e6f0ff; color: #11407f; }
+  .badge.warn { background: #fff0d6; color: #7a4a00; } .badge.ok { background: #e3f6e8; color: #14612c; }
+  pre.json { margin: 0; white-space: pre-wrap; font-size: 12px; }
+  @media (max-width: 1100px) { .app { grid-template-columns: 1fr; height: auto; } .panel { max-height: none; } #viewer { height: 80vh; } }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- left: how to pick a chunk -->
+  <section class="panel pad" id="left">
+    <h1>Chunk locator</h1>
+    <!-- nb_changed 2026-11-12: legend of the two box versions -->
+    <div class="hint">Boxes: <b>v1</b> = first version, sized to each chunk's own text (dotted outline when shown with others);
+      <b>v2</b> = fixed width per page, only the height varies, no overlap (solid outline);
+      <b>v3</b> = like v2 but one width for all pages of the same orientation, the widest page decides (double outline).
+      <b>v4</b> = v3 with better matching of table rows and "(א)" chunks, fewer estimated boxes (grooved outline).
+      <b>v5</b> = v4 with better boxes around table-5.4 rows: a row starts at its own cells, estimates shrink (ridged outline).
+      <!-- nb_changed 2026-11-17: v6 sentence added below; the original ending of this legend is kept here, commented out:
+      Toggle each version, or all, in the toolbar above the PDF. (nb_changed 2026-11-17: v3, v4 and v5 added to this legend)</div> -->
+      <b>v6</b> = v5 with every estimated chunk looked at again: chunk ends found with a shorter text, table rows and subsections placed
+      by their own text between their neighbours, so only 4 boxes are still estimated (outset outline).
+      Toggle each version, or all, in the toolbar above the PDF. (nb_changed 2026-11-17: v3 to v6 added to this legend)</div>
+    <div class="modes" id="modes">
+      <button data-mode="seq">Sequence no.</button>
+      <button data-mode="page">PDF page</button>
+      <button data-mode="all">All on page</button>
+      <button data-mode="id">Chunk id</button>
+      <button data-mode="section">Section</button>
+    </div>
+    <div id="controls"></div>
+    <div class="list" id="list"></div>
+  </section>
+
+  <!-- middle: the PDF page with the highlighted boxes -->
+  <section class="panel pdfcol">
+    <div class="toolbar">
+      <button id="prev">&#9664;</button>
+      <span>page</span><input id="pageNo" type="number" min="1" value="1"><span id="pageOf">/ ?</span>
+      <button id="next">&#9654;</button>
+      <button id="zoomOut">&minus;</button><button id="zoomIn">+</button>
+      <!-- nb_changed 2026-11-12: which version of the boxes to draw -->
+      <!-- nb_changed 2026-11-17: one toggle per version (v1, v2, v3) plus "all" (was v1 / v2 / both) -->
+      <span>boxes</span><span class="boxsw" id="boxSwitch"><button data-box="1">v1</button><button data-box="2">v2</button><button data-box="3">v3</button><button data-box="4">v4</button><button data-box="5">v5</button><button data-box="6">v6</button><button data-box="all">all</button></span>
+      <span class="spacer"></span>
+      <span id="chunkPages"></span>
+    </div>
+    <div id="viewer"><div id="pageWrap"><canvas id="canvas"></canvas><div id="overlay"></div></div></div>
+    <div id="status">Loading...</div>
+  </section>
+
+  <!-- right: text and metadata of the chosen chunk -->
+  <section class="panel pad" id="right">
+    <h1>Chosen chunk</h1>
+    <div id="details" class="hint">Pick a chunk on the left, or click a box on the page.</div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+// nb_changed: all of the page logic below is new.
+"use strict";
+const $ = id => document.getElementById(id);
+const state = { chunks: [], byId: new Map(), byPage: new Map(), sections: [], pdf: null, numPages: 0,
+                page: 1, scale: 1.4, mode: "seq", sel: null, token: 0, renderTask: null,
+                // nb_changed 2026-11-17: boxes = set of versions switched on (was "1" | "2" | "both"); avail = versions whose
+                // data file loaded (v1 is chunks.json itself, v2 / v3 are chunks_v2.json / chunks_v3.json)
+                // nb_changed 2026-11-17: v6 on by default too (the line before was: boxes: new Set([1, 2, 3, 4, 5]), avail: new Set([1]) };)
+                boxes: new Set([1, 2, 3, 4, 5, 6]), avail: new Set([1]) };
+const SEL_COLOR = "#ff6a00";   // the chosen chunk, in every mode except "All on page"
+
+// ---- helpers -------------------------------------------------------------------------------------------------
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const clamp = (n, a, b) => Math.min(Math.max(n, a), b);
+const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+function status(msg, err = false) { const s = $("status"); s.textContent = msg; s.className = err ? "err" : ""; }
+// one clearly different colour per chunk of a page: golden-angle steps around the colour wheel
+const colorAt = i => `hsl(${(i * 137.508) % 360}, 75%, 42%)`;
+// nb_changed 2026-11-12: a chunk now has regions of two versions (c.regions = v1, c.regions_v2 = v2). `vers` lists the versions
+// being shown, `regsOf` the regions of one version, `shownRegions` those of all shown versions, and `regionsOn` (was only
+// c.regions) the shown regions on page p.
+// nb_changed 2026-11-17: three versions now (v3 = c.regions_v3). `vers` is the switched-on versions that have data (was a
+// fixed [1] / [2] / [1, 2]), `regsOf` picks the regions of version 1, 2 or 3.
+// nb_changed 2026-11-17: exact / estimated differs per version now (v4 matches many more chunks), so each version has its own
+// flag: v1 = c.bbox_exact, v2..v4 = c.exact_v2..c.exact_v4 (read from that version's file in load()). `topV` is the version
+// that is filled and clickable (the highest one switched on, v1 when none), used where only one flag can be shown.
+const exactOf = (c, v) => (v === 1 ? c.bbox_exact : c["exact_v" + v]);
+const topV = () => vers().slice(-1)[0] || 1;
+// nb_changed 2026-11-17: six versions now (v6 = c.regions_v6); the two lines that were here before v6 are kept commented out
+// const vers = () => [1, 2, 3, 4, 5].filter(v => state.boxes.has(v) && state.avail.has(v));
+// const regsOf = (c, v) => (v === 1 ? c.regions : v === 2 ? c.regions_v2 : v === 3 ? c.regions_v3 : v === 4 ? c.regions_v4 : c.regions_v5) || [];
+const vers = () => [1, 2, 3, 4, 5, 6].filter(v => state.boxes.has(v) && state.avail.has(v));
+const regsOf = (c, v) => (v === 1 ? c.regions : v === 2 ? c.regions_v2 : v === 3 ? c.regions_v3 : v === 4 ? c.regions_v4 : v === 5 ? c.regions_v5 : c.regions_v6) || [];
+const shownRegions = c => vers().flatMap(v => regsOf(c, v));
+const regionsOn = (c, p) => shownRegions(c).filter(r => r.pdf_page === p);
+const pageChunks = p => state.byPage.get(p) || [];
+
+// ---- data ----------------------------------------------------------------------------------------------------
+async function load() {
+  if (!window.pdfjsLib) throw new Error("pdf.js did not load from cdnjs (network or proxy blocking it?)");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const [rows, pdf] = await Promise.all([fetch("chunks.json").then(r => r.json()), pdfjsLib.getDocument("plan.pdf").promise]);
+  state.chunks = rows; state.pdf = pdf; state.numPages = pdf.numPages;
+  // nb_changed 2026-11-12: version 2 of the boxes, merged into the chunks by chunk_id; without the file only version 1 works
+  // nb_changed 2026-11-17: the same for versions 2 and 3, each file on its own (was a single try for v2): a missing file
+  // only switches that version off, the others keep working
+  // nb_changed 2026-11-17: v4 and v5 added to the list of files
+  for (const [v, file, key] of [[2, "chunks_v2.json", "regions_v2"], [3, "chunks_v3.json", "regions_v3"], [4, "chunks_v4.json", "regions_v4"],
+                                [5, "chunks_v5.json", "regions_v5"], [6, "chunks_v6.json", "regions_v6"]]) {   // nb_changed 2026-11-17: v6 added
+    try {
+      const r = await fetch(file); if (!r.ok) throw new Error(r.status);
+      const m = new Map((await r.json()).map(x => [x.chunk_id, x]));
+      for (const c of rows) {
+        c[key] = m.has(c.chunk_id) ? m.get(c.chunk_id).regions : [];
+        c["exact_v" + v] = m.has(c.chunk_id) ? m.get(c.chunk_id).bbox_exact : c.bbox_exact;   // nb_changed 2026-11-17: per version
+      }
+      state.avail.add(v);
+    } catch (e) { for (const c of rows) { c[key] = []; c["exact_v" + v] = c.bbox_exact; } }
+  }
+  for (const c of rows) {
+    state.byId.set(c.chunk_id, c);
+    // nb_changed 2026-11-17: pages of all three versions (was v1 and v2), so the page lists do not depend on the switch
+    // nb_changed 2026-11-17: v4 and v5 pages included as well
+    // nb_changed 2026-11-17: v6 pages included too (the line that was here before: ...c.regions_v4, ...c.regions_v5].map(...)
+    for (const p of new Set([...c.regions, ...c.regions_v2, ...c.regions_v3, ...c.regions_v4, ...c.regions_v5, ...c.regions_v6].map(r => r.pdf_page))) {
+      if (!state.byPage.has(p)) state.byPage.set(p, []);
+      state.byPage.get(p).push(c);
+    }
+  }
+  for (const list of state.byPage.values()) list.sort((a, b) => a.seq - b.seq);
+  state.sections = [...new Set(rows.map(c => c.section_id))].sort(natural);
+  $("pageNo").max = state.numPages; $("pageOf").textContent = "/ " + state.numPages;
+}
+
+// ---- PDF page + overlay --------------------------------------------------------------------------------------
+async function showPage(n, scrollToSel = false) {
+  state.page = clamp(n, 1, state.numPages);
+  const token = ++state.token;
+  if (state.renderTask) { try { state.renderTask.cancel(); } catch (e) {} }
+  const page = await state.pdf.getPage(state.page);
+  if (token !== state.token) return;
+  const vp = page.getViewport({ scale: state.scale });
+  const dpr = window.devicePixelRatio || 1, cv = $("canvas");
+  cv.width = Math.floor(vp.width * dpr); cv.height = Math.floor(vp.height * dpr);
+  cv.style.width = vp.width + "px"; cv.style.height = vp.height + "px";
+  $("overlay").style.width = vp.width + "px"; $("overlay").style.height = vp.height + "px";
+  $("pageNo").value = state.page;
+  drawOverlay();
+  if (scrollToSel) centerOnSelection();
+  state.renderTask = page.render({ canvasContext: cv.getContext("2d"), viewport: vp, transform: dpr === 1 ? null : [dpr, 0, 0, dpr, 0, 0] });
+  try { await state.renderTask.promise; } catch (e) { if (e && e.name !== "RenderingCancelledException") status(String(e), true); return; }
+  if (token === state.token) { window.__rendered = state.page; refreshStatus(); }
+}
+
+// Boxes are in PDF points from the top-left of the page, so a box is its coordinates times the zoom.
+function drawOverlay() {
+  const ov = $("overlay"); ov.innerHTML = "";
+  const all = state.mode === "all", list = pageChunks(state.page);
+  // "All on page": every chunk of the page in its own colour; other modes: only the chosen chunk
+  const shown = all ? list : (state.sel && regionsOn(state.sel, state.page).length ? [state.sel] : []);
+  shown.forEach(c => {
+    const color = all ? colorAt(list.indexOf(c)) : SEL_COLOR, isSel = c === state.sel;
+    // nb_changed 2026-11-12: one pass per shown version (was one pass over c.regions).
+    // nb_changed 2026-11-17: with several versions on, only the top-most (highest number) is filled and clickable; every
+    // other one is a "ghost" (outline only), and `multi` turns on the per-version line style (dotted / solid / double).
+    const on = vers(), top = on[on.length - 1];
+    on.forEach(v => regsOf(c, v).filter(r => r.pdf_page === state.page).forEach(r => {
+      const ghost = v !== top, multi = on.length > 1;
+      const d = document.createElement("div");
+      d.className = "box v" + v + (multi ? " multi" : "") + (ghost ? " ghost" : "") + (exactOf(c, v) ? "" : " est") + (isSel ? " sel" : "") + (r.y0 * state.scale < 20 ? " top" : "");
+      d.style.cssText = `left:${r.x0 * state.scale}px;top:${r.y0 * state.scale}px;width:${(r.x1 - r.x0) * state.scale}px;` +
+        `height:${(r.y1 - r.y0) * state.scale}px;border-color:${color}`;
+      // translucent fill of the same colour (hsl() cannot take a hex alpha suffix, so use color-mix); none for the ghost
+      if (!ghost) d.style.background = `color-mix(in srgb, ${color} ${isSel ? 28 : 14}%, transparent)`;
+      d.title = `v${v}  #${c.seq}  ${c.chunk_id}${exactOf(c, v) ? "" : "  (estimated box)"}`;   // nb_changed 2026-11-17: flag of this version
+      d.dataset.chunk = c.chunk_id;
+      // nb_changed 2026-11-12: the tag starts with the version; the ghost only gets a tag for the chosen chunk (less clutter)
+      if (!(ghost && !isSel)) {
+        const tag = document.createElement("span");
+        tag.className = "tag"; tag.style.background = color;
+        // nb_changed 2026-11-17: ghost tags sit below the box, one line lower per ghost version, so they do not overlap
+        if (ghost) tag.style.bottom = `${-18 - 18 * on.indexOf(v)}px`;
+        tag.textContent = `v${v} ` + ((isSel || !all) ? `#${c.seq} ${c.chunk_id}${exactOf(c, v) ? "" : " (estimated)"}` : `#${c.seq}`);   // nb_changed 2026-11-17: flag of this version
+        d.appendChild(tag);
+      }
+      d.addEventListener("click", () => select(c, { stay: true }));
+      ov.appendChild(d);
+    }));
+  });
+}
+
+function centerOnSelection() {
+  // nb_changed 2026-11-12: prefer the box that is not a ghost, so the view centres on the top-most version that is shown
+  // (nb_changed 2026-11-17: the ghosts are now v1 and v2 as well, not only v1)
+  const ov = $("overlay"), el = ov.querySelector(".box.sel:not(.ghost)") || ov.querySelector(".box:not(.ghost)") || ov.querySelector(".box");
+  if (el) el.scrollIntoView({ block: "center", inline: "center" });
+  else $("viewer").scrollTop = 0;
+}
+
+function refreshStatus() {
+  const c = state.sel;
+  // nb_changed 2026-11-17: the flag of the top-most version shown (was always the v1 flag)
+  status(c ? `Chunk #${c.seq} (${c.chunk_id}) - ${exactOf(c, topV()) ? "exact box" : "estimated box"} (v${topV()}) - showing PDF page ${state.page}`
+           : `PDF page ${state.page} - ${pageChunks(state.page).length} chunk(s) on this page`);
+}
+
+// ---- choosing a chunk ----------------------------------------------------------------------------------------
+function select(c, opts = {}) {
+  state.sel = c;
+  renderDetails(c);
+  // keep the pick boxes of the active mode in step with the chosen chunk (e.g. when it was picked by a click on a box)
+  if ($("seqIn")) $("seqIn").value = c.seq;
+  if ($("idIn")) $("idIn").value = c.chunk_id;
+  document.querySelectorAll(".item").forEach(el => el.classList.toggle("sel", el.dataset.chunk === c.chunk_id));
+  // nb_changed 2026-11-12: uses the regions of the shown version(s) (was c.regions)
+  if (!shownRegions(c).length) { status(`Chunk #${c.seq} (${c.chunk_id}) has no region in the PDF`, true); drawOverlay(); return; }
+  // go to the chunk's first page; but stay on the page being shown when the chunk has a box there and the pick came from
+  // that page (a click on a box, or the list of "All on page" / "PDF page")
+  const onShown = regionsOn(c, state.page).length > 0;
+  const target = onShown && (opts.stay || state.mode === "all" || state.mode === "page") ? state.page : shownRegions(c)[0].pdf_page;  // nb_changed 2026-11-12: was c.regions[0]
+  renderChunkPages(c);
+  showPage(target, true);
+}
+
+// A chunk over two pages gets one button per page, to move between its boxes.
+function renderChunkPages(c) {
+  const pages = [...new Set(shownRegions(c).map(r => r.pdf_page))];  // nb_changed 2026-11-12: pages of the shown version(s) (was c.regions)
+  $("chunkPages").innerHTML = (pages.length ? "chunk on page: " : "") + pages.map(p => `<button data-goto="${p}">${p}</button>`).join(" ");
+  $("chunkPages").querySelectorAll("button").forEach(b => b.addEventListener("click", () => showPage(+b.dataset.goto, true)));
+}
+
+function renderDetails(c) {
+  const kv = (k, v) => `<tr><td>${k}</td><td>${v}</td></tr>`;
+  const loc = [c.district, c.area && `${c.area} ${c.area_name || ""}`.trim(), c.zone].filter(Boolean);
+  const refs = (c.refs_out || []).map(r => `${esc(r.target || r.raw)} <span class="badge ${r.mandatory ? "warn" : ""}">${esc(r.status)}${r.mandatory ? ", mandatory" : ""}</span>`).join("<br>");
+  $("details").className = "";
+  $("details").innerHTML =
+    `<div class="text" dir="auto">${esc(c.text)}</div><h2>Metadata</h2><table class="meta">` +
+    kv("seq", `<b>${c.seq}</b> of ${state.chunks.length - 1}`) + kv("chunk_id", `<b>${esc(c.chunk_id)}</b>`) +
+    kv("section_id", esc(c.section_id)) + kv("kind", esc(c.kind)) + kv("binding", c.binding ? "yes" : "no (intro)") +
+    kv("heading_path", esc((c.heading_path || []).join(" > "))) + kv("tokens", c.tokens) +
+    kv("page_start / end", `${c.page_start} / ${c.page_end}`) +
+    // nb_changed 2026-11-17: one badge per version (the flag differs between versions)
+    kv("bbox_exact", [1, 2, 3, 4, 5, 6].filter(v => state.avail.has(v)).map(v => `v${v} ` + (exactOf(c, v)
+      ? '<span class="badge ok">exact</span>' : '<span class="badge warn">estimated between neighbours</span>')).join("<br>")) +
+    (loc.length ? kv("table 5.4 location", esc(loc.join(" > "))) : "") + (refs ? kv("references out", refs) : "") +
+    boxChange(c) +   // nb_changed 2026-11-12: v1 / v2 box size per page
+    kv("regions v1", `<pre class="json">${esc(JSON.stringify(c.regions, null, 1))}</pre>`) +   // nb_changed 2026-11-12: labelled, was "regions"
+    kv("regions v2", `<pre class="json">${esc(JSON.stringify(c.regions_v2, null, 1))}</pre>`) +
+    kv("regions v3", `<pre class="json">${esc(JSON.stringify(c.regions_v3, null, 1))}</pre>`) +   // nb_changed 2026-11-17: v3 row
+    kv("regions v4", `<pre class="json">${esc(JSON.stringify(c.regions_v4, null, 1))}</pre>`) +   // nb_changed 2026-11-17: v4 row
+    kv("regions v5", `<pre class="json">${esc(JSON.stringify(c.regions_v5, null, 1))}</pre>`) +   // nb_changed 2026-11-17: v5 row
+    kv("regions v6", `<pre class="json">${esc(JSON.stringify(c.regions_v6, null, 1))}</pre>`) + `</table>`;   // nb_changed 2026-11-17: v6 row
+}
+
+// nb_changed 2026-11-12: new. One line per page of the chunk: size (width x height, PDF points) of the v1 and the v2 box.
+function boxChange(c) {
+  const size = r => r ? `${Math.round(r.x1 - r.x0)}&times;${Math.round(r.y1 - r.y0)}` : "-";
+  // nb_changed 2026-11-17: v3, v4 and v5 added (v1 -> ... -> v5 per page)
+  // nb_changed 2026-11-17: v6 added (was [1, 2, 3, 4, 5] here and in the .map below)
+  const pages = [...new Set([1, 2, 3, 4, 5, 6].flatMap(v => regsOf(c, v)).map(r => r.pdf_page))];
+  if (!pages.length) return "";
+  return `<tr><td>box size (pt, w&times;h)</td><td>` + pages.map(p =>
+    `PDF page ${p}: ` + [1, 2, 3, 4, 5, 6].map(v => `v${v} ${size(regsOf(c, v).find(r => r.pdf_page === p))}`).join(" &rarr; ")).join("<br>") + `</td></tr>`;
+}
+
+// ---- the five ways to pick -----------------------------------------------------------------------------------
+const itemHtml = (c, color) => `<div class="item" data-chunk="${esc(c.chunk_id)}">${color ? `<span class="sw" style="background:${color}"></span>` : ""}` +
+  `<span class="seq">#${c.seq}</span><span class="cid">${esc(c.chunk_id)}</span>` +
+  `<span class="kind">${esc(c.kind)}${exactOf(c, topV()) ? "" : " &middot; est."}</span></div>`;   // nb_changed 2026-11-17: top-most version's flag
+
+function fillList(chunks, colored = false) {
+  const list = $("list");
+  list.innerHTML = chunks.length ? chunks.map((c, i) => itemHtml(c, colored ? colorAt(i) : null)).join("") : '<div class="hint">No chunks.</div>';
+  list.querySelectorAll(".item").forEach(el => el.addEventListener("click", () => select(state.byId.get(el.dataset.chunk))));
+  if (state.sel) list.querySelectorAll(".item").forEach(el => el.classList.toggle("sel", el.dataset.chunk === state.sel.chunk_id));
+}
+
+const modes = {
+  seq: {
+    controls: () => `<h2>Sequence number</h2><div class="row"><button id="sPrev">&#9664;</button>
+      <input id="seqIn" type="number" min="0" max="${state.chunks.length - 1}" value="${state.sel ? state.sel.seq : 0}">
+      <button id="sNext">&#9654;</button><button id="sGo">Go</button></div>
+      <div class="hint">0 - ${state.chunks.length - 1}, the order of the chunks in the Word document.</div>`,
+    bind: () => {
+      const go = n => { n = clamp(+n || 0, 0, state.chunks.length - 1); $("seqIn").value = n; select(state.chunks[n]); };
+      $("sGo").onclick = () => go($("seqIn").value);
+      $("seqIn").onkeydown = e => { if (e.key === "Enter") go(e.target.value); };
+      $("sPrev").onclick = () => go(+$("seqIn").value - 1); $("sNext").onclick = () => go(+$("seqIn").value + 1);
+      fillList([]);
+    },
+  },
+  page: {
+    controls: () => `<h2>PDF page</h2><div class="row"><input id="pgIn" type="number" min="1" max="${state.numPages}" value="${state.page}">
+      <button id="pgGo">Go</button></div><div class="hint">Lists the chunks that have a box on that page. Pick one to highlight it.</div>`,
+    bind: () => {
+      const go = () => { const p = clamp(+$("pgIn").value || 1, 1, state.numPages); state.sel = null; renderChunkPages({ regions: [] });
+        fillList(pageChunks(p)); showPage(p); };
+      $("pgGo").onclick = go; $("pgIn").onkeydown = e => { if (e.key === "Enter") go(); };
+      fillList(pageChunks(state.page));
+    },
+  },
+  all: {
+    controls: () => `<h2>All chunks on the page</h2><div class="hint">Every chunk with a box on the PDF page being shown, each in its own colour (dashed = estimated box).
+      Use the page arrows above the PDF to move; click a colour entry or a box to read the chunk.</div>`,
+    bind: () => fillList(pageChunks(state.page), true),
+  },
+  id: {
+    controls: () => `<h2>Chunk id</h2><div class="row"><input id="idIn" list="ids" placeholder="e.g. 3.5.4 or 5.4[42]" value="${state.sel ? esc(state.sel.chunk_id) : ""}">
+      <button id="idGo">Go</button></div><datalist id="ids">${state.chunks.map(c => `<option value="${esc(c.chunk_id)}">`).join("")}</datalist>
+      <div class="hint">Type to filter; Enter opens an exact id.</div>`,
+    bind: () => {
+      const filter = () => { const q = $("idIn").value.trim().toLowerCase();
+        fillList(q ? state.chunks.filter(c => c.chunk_id.toLowerCase().includes(q)).slice(0, 80) : []); };
+      const go = () => { const c = state.byId.get($("idIn").value.trim()); if (c) select(c); else status("No chunk with that id", true); };
+      $("idIn").oninput = filter; $("idGo").onclick = go; $("idIn").onkeydown = e => { if (e.key === "Enter") go(); };
+      filter();
+    },
+  },
+  section: {
+    controls: () => `<h2>Section</h2><select id="secIn"><option value="">- choose a section -</option>
+      ${state.sections.map(s => `<option value="${esc(s)}">${esc(s)} (${state.chunks.filter(c => c.section_id === s).length})</option>`).join("")}</select>
+      <div class="hint">Lists the chunks of one section (its section_id), in document order.</div>`,
+    bind: () => {
+      $("secIn").onchange = () => fillList(state.chunks.filter(c => c.section_id === $("secIn").value));
+      if (state.sel) { $("secIn").value = state.sel.section_id; $("secIn").onchange(); } else fillList([]);
+    },
+  },
+};
+
+function setMode(m) {
+  state.mode = m;
+  document.querySelectorAll("#modes button").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
+  $("controls").innerHTML = modes[m].controls();
+  modes[m].bind();
+  drawOverlay();   // "All on page" paints every chunk of the page, the other modes only the chosen one
+}
+
+// ---- wiring --------------------------------------------------------------------------------------------------
+function onPageChange(p) {
+  showPage(p);
+  if (state.mode === "all") fillList(pageChunks(state.page), true);
+  if (state.mode === "page") { $("pgIn").value = clamp(p, 1, state.numPages); fillList(pageChunks(clamp(p, 1, state.numPages))); }
+}
+$("prev").onclick = () => onPageChange(state.page - 1);
+$("next").onclick = () => onPageChange(state.page + 1);
+$("pageNo").onkeydown = e => { if (e.key === "Enter") onPageChange(+e.target.value || 1); };
+$("zoomIn").onclick = () => { state.scale = Math.min(state.scale + 0.2, 3); showPage(state.page, true); };
+$("zoomOut").onclick = () => { state.scale = Math.max(state.scale - 0.2, 0.6); showPage(state.page, true); };
+document.querySelectorAll("#modes button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+// nb_changed 2026-11-12: the boxes switch (v1 / v2 / both): redraw the boxes, the page buttons of the chosen chunk and the lists
+// nb_changed 2026-11-17: now one toggle per version plus "all" (was a v1 / v2 / both choice). `v1`..`v3` flip that version,
+// "all" switches every available version on, or all off when they are all on already.
+function markBoxButtons() {
+  document.querySelectorAll("#boxSwitch button").forEach(b => {
+    const k = b.dataset.box, avail = [...state.avail];
+    b.classList.toggle("on", k === "all" ? avail.every(v => state.boxes.has(v)) : state.boxes.has(+k));
+    b.disabled = k === "all" ? false : !state.avail.has(+k);   // a version whose file did not load cannot be switched on
+  });
+}
+function setBoxes(k) {
+  const avail = [...state.avail];
+  if (k === "all") state.boxes = avail.every(v => state.boxes.has(v)) ? new Set() : new Set(avail);
+  else state.boxes.has(+k) ? state.boxes.delete(+k) : state.boxes.add(+k);
+  markBoxButtons();
+  if (state.sel) renderChunkPages(state.sel);
+  if (state.mode === "all") fillList(pageChunks(state.page), true);
+  drawOverlay(); refreshStatus();
+  // nb_changed 2026-11-17: the message now names v6 as well; the earlier message is kept commented out
+  // if (!vers().length) status("No box version is switched on: use v1 / v2 / v3 / v4 / v5 / all above the PDF");   // (v4, v5 added)
+  if (!vers().length) status("No box version is switched on: use v1 / v2 / v3 / v4 / v5 / v6 / all above the PDF");
+}
+document.querySelectorAll("#boxSwitch button").forEach(b => b.addEventListener("click", () => setBoxes(b.dataset.box)));
+
+// URL parameters preselect a mode, e.g. ?mode=seq&v=176, ?mode=all&v=12, ?mode=id&v=3.5.4, ?mode=section&v=3.5, ?mode=page&v=37
+async function start() {
+  try { await load(); } catch (e) { status("Could not load the PDF or chunks: " + e.message, true); return; }
+  const q = new URLSearchParams(location.search), mode = modes[q.get("mode")] ? q.get("mode") : "seq", v = q.get("v");
+  if (q.get("zoom")) state.scale = clamp(+q.get("zoom") || 1.4, 0.6, 3);
+  // nb_changed 2026-11-17: ?boxes= takes a list of versions (1,3), all, or none; the old 1, 2 and both still work (was 1|2|both)
+  const qb = q.get("boxes");
+  // nb_changed 2026-11-17: v4 and v5 accepted too (all = 1,2,3,4,5)
+  // nb_changed 2026-11-17: v6 accepted too (all = 1..6); the two lines before were the same with [1, 2, 3, 4, 5]
+  if (qb !== null) state.boxes = qb === "all" ? new Set([1, 2, 3, 4, 5, 6]) : qb === "both" ? new Set([1, 2])
+    : new Set(qb.split(",").map(Number).filter(v => [1, 2, 3, 4, 5, 6].includes(v)));
+  markBoxButtons();   // show the active versions on the switch
+  // nb_changed 2026-11-17: now < 6 and names chunks_v6.json; the earlier line is kept commented out
+  // if (state.avail.size < 5) status("some box versions are not available (chunks_v2/v3/v4/v5.json not found)", true);
+  if (state.avail.size < 6) status("some box versions are not available (chunks_v2/v3/v4/v5/v6.json not found)", true);
+  setMode(mode);
+  if (v !== null) {
+    if (mode === "seq") select(state.chunks[clamp(+v || 0, 0, state.chunks.length - 1)]);
+    else if (mode === "id" && state.byId.get(v)) { $("idIn").value = v; select(state.byId.get(v)); }
+    else if (mode === "page" || mode === "all") { $("pageNo").value = +v; onPageChange(+v); if (mode === "page") { $("pgIn").value = +v; fillList(pageChunks(+v)); } }
+    else if (mode === "section") { $("secIn").value = v; $("secIn").onchange(); const f = state.chunks.find(c => c.section_id === v); if (f) select(f); }
+  } else showPage(1);
+  const qc = q.get("select"); if (qc && state.byId.get(qc)) select(state.byId.get(qc), { stay: true });   // pick a chunk of the shown page
+}
+start();
+</script>
+</body>
+</html>

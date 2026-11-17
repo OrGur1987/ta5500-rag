@@ -39,6 +39,17 @@ def test_large_section_splits_at_children_and_small_siblings_merge():
     assert "3.1.3" in holding("3.1.2")  # two small siblings share a chunk
 
 
+# nb_changed: new test for the `seq` column (position of each chunk in document order)
+def test_seq_numbers_the_chunks_in_document_order():
+    md = (f"## פרק 3 – אזורי יעוד\n### 3.1. כללי\n"
+          f"3.1.1\tא\n(א) {words(30)}\n"
+          f"3.1.2\tב\n(א) {words(3)}\n")
+    df = chunk(md, min_tokens=10, max_tokens=40)
+    assert df["seq"].tolist() == list(range(len(df)))  # 0, 1, 2, ... with no gaps
+    seq_of = lambda node: df[df["node_ids"].map(lambda ids: node in ids)].iloc[0]["seq"]
+    assert seq_of("3.1.1(א)") < seq_of("3.1.2(א)")  # earlier in the text, smaller seq
+
+
 def test_table_records_stay_atomic_and_get_their_location():
     md = ("## פרק 5 – אזורי תכנון\n### 5.4. טבלה\n"
           "[רובע 7 > 703 מבואות יפו > 703 ה' אזור מעורב]\n- רח\"ק מרבי (1): 5\n\n"
