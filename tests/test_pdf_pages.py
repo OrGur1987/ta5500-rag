@@ -105,6 +105,23 @@ def test_x_by_orientation_reports_the_pages_that_set_the_edges_and_leaves_y_alon
     assert default[0][0]["x0"] == 30.0  # without the flag every page keeps its own range (version 2)
 
 
+def test_reusing_index_keeps_page_ranges_and_orientation_sources():
+    idx = lines_index({4: [P1, P2B], 5: [P2A], 6: [P3]})
+    idx.words["sizes"] = [(100.0, 200.0), (100.0, 200.0), (200.0, 100.0)]
+    idx.words["text_x"] = [(30.0, 60.0), (5.0, 95.0), (10.0, 190.0)]
+    idx.words["orient"] = ["portrait", "portrait", "landscape"]
+    missing = "טקסט שאינו מופיע בקובץ המקור כלל ולכן לא יימצא"
+    data = chunks(P1, missing, P3)
+
+    for flag, expected in [(True, (5.0, 95.0)), (False, (30.0, 60.0)), (True, (5.0, 95.0))]:
+        _, _, missed, regions, _ = locate(data, idx, start_page=4, x_by_orientation=flag)
+        assert missed == ["c1"]
+        assert (regions[0][0]["x0"], regions[0][0]["x1"]) == expected
+        assert (regions[1][0]["x0"], regions[1][0]["x1"]) == expected
+        if flag:
+            assert idx.words["x_source"]["portrait"] == [5.0, 2, 95.0, 2]
+
+
 def test_every_box_on_a_page_uses_the_pages_fixed_x_range():
     idx = lines_index({4: [P1, P2A], 5: [P2B, P3]})
     regions = locate(chunks(P1, P2A + " " + P2B, P3), idx, start_page=4)[3]

@@ -94,18 +94,20 @@ class PageIndex:
                       "sizes": [(p.rect.width, p.rect.height) for p in doc],
                       "text_x": text_x, "orient": orient}  # nb_changed 2026-11-12: fixed X range and orientation per page
 
-    def regions(self, start: int, end: int) -> list[dict]:
+    def regions(self, start: int, end: int, text_x: list[tuple[float, float] | None] | None = None) -> list[dict]:
         """One box per page for the text between two offsets: the union of the boxes of the words in that range.
 
         A chunk that runs over a page break gets one region per page (start word to the end of the first page,
         the top of the next page to the end word). Boxes are in PDF points from the top-left of the page.
 
-        nb_changed 2026-11-12: x0/x1 are no longer the extent of the chunk's own words: every box on a page gets the
-        page's fixed text-area X range (w["text_x"]); only y0/y1 (first line top, last line bottom, plus PAD_Y) vary.
+        Each box uses the supplied X range, or the page's fixed text-area range by default; y0/y1 are based on the
+        first and last lines, plus PAD_Y.
         """
         w = self.words
         if w is None or end <= start or start >= w["end"]:
             return []
+        if text_x is None:
+            text_x = w["text_x"]
         first = bisect.bisect_right(w["offsets"], max(start, 0)) - 1
         last = max(bisect.bisect_right(w["offsets"], min(end, w["end"]) - 1) - 1, first)
         union: dict[int, list[float]] = {}
@@ -115,15 +117,15 @@ class PageIndex:
             u[:] = [min(u[0], x0), min(u[1], y0), max(u[2], x1), max(u[3], y1)]
         # nb_changed 2026-11-12: X from the page's fixed range (was b[0], b[2]); Y padded by PAD_Y (was unpadded);
         # "orientation" added. A page without a text area (no words or drawings) has no X range, so no region.
-        return [{"page": self.numbers[p], "pdf_page": p + 1, "x0": w["text_x"][p][0], "y0": round(b[1] - PAD_Y, 2),
-                 "x1": w["text_x"][p][1], "y1": round(b[3] + PAD_Y, 2),
+        return [{"page": self.numbers[p], "pdf_page": p + 1, "x0": text_x[p][0], "y0": round(b[1] - PAD_Y, 2),
+                 "x1": text_x[p][1], "y1": round(b[3] + PAD_Y, 2),
                  "page_w": round(w["sizes"][p][0], 2), "page_h": round(w["sizes"][p][1], 2),
                  "orientation": w["orient"][p]}
-                for p, b in union.items() if w["text_x"][p]]
+                for p, b in union.items() if text_x[p]]
 
     # nb_changed 2026-11-17: new (box version 3). One X range per page orientation for the whole document.
-    def use_orientation_x(self) -> None:
-        """Gives every page the X range of its orientation: the leftmost left edge and the rightmost right edge found on
+    def use_orientation_x(self) -> list[tuple[float, float] | None] | None:
+        """Return each page's orientation X range: the leftmost left edge and the rightmost right edge found on
         ANY page of that orientation (the values closest to the page edges, not the first page's), so all boxes on all
         portrait pages share one X pair and all boxes on all landscape pages share another. Y is not touched.
         `words["x_source"]` records, per orientation, [left, page of the left, right, page of the right] (PDF pages)."""
@@ -139,8 +141,8 @@ class PageIndex:
                 e[0], e[1] = tx[0], p + 1
             if tx[1] > e[2]:
                 e[2], e[3] = tx[1], p + 1
-        w["text_x"] = [(ext[o][0], ext[o][2]) if tx else None for tx, o in zip(w["text_x"], w["orient"])]
         w["x_source"] = ext
+        return [(ext[o][0], ext[o][2]) if tx else None for tx, o in zip(w["text_x"], w["orient"])]
 
     def page_at(self, pos: int) -> int:
         return self.numbers[bisect.bisect_right(self.starts, pos) - 1]
@@ -282,8 +284,7 @@ def locate(chunks: pd.DataFrame, index: PageIndex, start_page: int,
     nb_changed: also returns `regions` (one box per page of each chunk, see PageIndex.regions) and `exact`
     (True when the chunk's text was found in the PDF, False when its regions are only an estimate).
     """
-    if x_by_orientation:  # nb_changed 2026-11-17: box version 3, one X range per orientation (see use_orientation_x)
-        index.use_orientation_x()
+    text_x = index.use_orientation_x() if x_by_orientation else None
     cursor = index.offset_of_page(start_page)
     first_offset = cursor  # nb_changed: where the body starts, the lower bound for unmatched chunks at the beginning
     starts, ends, missed = [], [], []
@@ -375,16 +376,17 @@ def locate(chunks: pd.DataFrame, index: PageIndex, start_page: int,
         exact[k] = True
         starts[k] = index.page_at(spans[k][0])
         ends[k] = max(starts[k], index.page_at(spans[k][1] - 1))
-    regions = _regions(index, spans, anchors, first_offset)
+    regions = _regions(index, spans, anchors, first_offset, text_x)
     return starts, ends, missed, regions, exact
 
 
 # nb_changed: new. Turns the offsets found by `locate` into regions, estimating the unmatched chunks.
-def _regions(index: PageIndex, spans: list, anchors: list[str], first_offset: int) -> list[list[dict]]:
+def _regions(index: PageIndex, spans: list, anchors: list[str], first_offset: int,
+             text_x: list[tuple[float, float] | None] | None = None) -> list[list[dict]]:
     """Regions per chunk. A matched chunk gets the boxes of its own text. A run of unmatched chunks gets the text
     between the end of the matched chunk before it and the start of the one after it, split among the run by
     text length; this is an estimate (the caller flags it)."""
-    regions = [index.regions(*s) if s else None for s in spans]
+    regions = [index.regions(*s, text_x=text_x) if s else None for s in spans]
     i = 0
     while i < len(spans):
         if spans[i]:
@@ -401,7 +403,7 @@ def _regions(index: PageIndex, spans: list, anchors: list[str], first_offset: in
             a = lo + (hi - lo) * done // sum(weights)
             done += weights[k - i]
             b = lo + (hi - lo) * done // sum(weights)
-            regions[k] = index.regions(a, b)
+            regions[k] = index.regions(a, b, text_x=text_x)
         i = j
     return _separate(regions)  # nb_changed 2026-11-12: consecutive boxes on a page must not overlap
 
