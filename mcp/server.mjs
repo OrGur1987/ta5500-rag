@@ -87,7 +87,10 @@ server.registerTool(
       const hitsMarker = Array.isArray(r.hits) && r.hits.length
         ? `\n\n<!--ta5500-hits:${JSON.stringify(r.hits.map((h) => ({ id: h.chunk_id, p: h.page_start, s: Number(h.score?.toFixed?.(3) ?? h.score) })))}-->`
         : "";
-      return ok(`${head}\n\n${warning}${r.context ?? JSON.stringify(r.hits, null, 2)}${hitsMarker}`);
+      return {
+        ...ok(`${head}\n\n${warning}${r.context ?? JSON.stringify(r.hits, null, 2)}${hitsMarker}`),
+        structuredContent: r,
+      };
     } catch (e) {
       return fail(e);
     }

@@ -161,6 +161,22 @@ def test_chunk_over_two_pages_gets_one_region_per_page():
     assert regions[1][0]["page_w"] == 100.0 and regions[1][0]["page_h"] == 200.0
 
 
+def test_page_end_uses_the_last_letter_of_a_tail_crossing_a_page_boundary():
+    first, last = P2A.rsplit(" ", 1)
+    idx = words_index({4: P1 + " " + first, 5: last + " " + P3})
+
+    starts, ends, missed, regions, exact = locate(chunks(P1, P2A, P3), idx, start_page=4)
+    assert (starts, ends, missed, exact) == ([4, 4, 5], [4, 5, 5], [], [True, True, True])
+    assert [region["page"] for region in regions[1]] == [4, 5]
+
+
+def test_page_end_stays_on_previous_page_when_chunk_ends_at_boundary():
+    idx = words_index({4: P1, 5: P2A})
+
+    starts, ends, missed, _, exact = locate(chunks(P1, P2A), idx, start_page=4)
+    assert (starts, ends, missed, exact) == ([4, 5], [4, 5], [], [True, True])
+
+
 def test_unmatched_chunk_is_estimated_between_its_neighbours_and_flagged():
     idx = words_index({4: P1 + " " + P2A, 5: P2B + " " + P3})
     missing = "טקסט שאינו מופיע בקובץ המקור כלל ולכן לא יימצא"
@@ -256,6 +272,16 @@ def test_end_is_found_with_a_shorter_tail_when_the_last_30_letters_differ():
     regions, exact = locate(chunks(P2A + " " + P2B, P3), idx, start_page=4)[3:]
     assert exact == [True, True]  # the last 15 letters are found, so the chunk is located at both ends
     assert regions[0][0]["y0"] == -PAD_Y and regions[0][0]["y1"] == 20 + 10 + PAD_Y  # lines 1 and 2, not line 3
+
+
+def test_shorter_tail_crossing_a_page_boundary_sets_end_page():
+    first, last = P2B_EXTRA.rsplit(" ", 1)
+    idx = words_index({4: P2A + " " + first, 5: last + " " + P3})
+    assert idx.find(_letters(P2A + " " + P2B)[-30:], 0) == -1
+
+    starts, ends, missed, regions, exact = locate(chunks(P2A + " " + P2B, P3), idx, start_page=4)
+    assert (starts, ends, missed, exact) == ([4, 5], [5, 5], [], [True, True])
+    assert [region["page"] for region in regions[0]] == [4, 5]
 
 
 def test_end_not_found_by_any_tail_is_the_start_of_the_next_matched_chunk_and_stays_estimated():

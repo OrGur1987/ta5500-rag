@@ -166,9 +166,17 @@ Parameters and Hebrew labels are in `models.yml` (`retrieval`, `labels`). Table 
 | `GET /health` | 200 once the index is loaded and the embedding server answers (the service warms up at start); 503 otherwise. |
 | `GET /demo` | A test page in right-to-left Hebrew for trying the search by hand: a question box, one picker for planning areas (with their sub-areas) and table rows (streets, symbols, zone-type rows), and one for zone types (filled from `/v1/locations`, a category stands for all its types), an API-key field, and the results with match level, detected location, each hit's citation, pages, score and text, plus the exact context block the assistant would receive. A browser is all it needs; the page is not part of the API contract and is not listed in the OpenAPI spec. |
 
-Settings by environment variable: `RAG_API_KEY` (when set, `/v1` calls need an `X-API-Key` header; put it in a `.env` file next to `docker-compose.yml`), `RAG_CORS_ORIGINS` (comma-separated, only if a browser calls the service directly; keep the key out of frontend code), `RAG_DATA_DIR` and `RAG_EMBED_BASE_URL` (set by Compose). Chunk ids never leave the service; the UI gets citations.
+Settings by environment variable: `RAG_API_KEY` (when set, `/v1` calls need an `X-API-Key` header; put it in a `.env` file next to `docker-compose.yml`), `RAG_CORS_ORIGINS` (comma-separated, only if a browser calls the service directly; keep the key out of frontend code), `RAG_DATA_DIR` and `RAG_EMBED_BASE_URL` (set by Compose). Search results include chunk IDs for clients that locate hits in the PDF.
 
 `bundle/` holds the three index files (`chunks.parquet`, `nodes.parquet`, `embeddings_<model>.parquet`) copied from `local_resources/` after a build, so that anyone can run the stack from a clone of the repository. They are a matching set: the service refuses to start on embeddings that do not match the chunks. Copy all three together and commit them in one commit, mentioning the plan version. Keeping the bundle in git is a deliberate choice: it is small (about 3.4 MB), changes only when the plan or the chunking changes, and makes setup a single clone. Revisit it if the bundle grows past roughly 10-20 MB, changes often, or several plan versions must be kept (then publish it as a versioned artifact instead). A teammate only needs Docker; running the build stages or Lemonade is not required.
+
+After rebuilding the bundle's PDF pages, regenerate the app's viewer data from the same chunks:
+
+```text
+python -m pipeline.export_pdf_chunks bundle/chunks.parquet PATH_TO_APP/public/ta5500/chunks.json
+```
+
+Deploy that file with the same PDF used by the pages stage; chunk IDs and box coordinates must match the served bundle and PDF.
 
 Verified: the evaluation run against the containerized embedder gives the same Hit, recall, MRR and bands as with Lemonade (a few borderline hits differ by one chunk, e.g. 10.5 instead of 10.6 chunks per question). Run it again after changing the llama.cpp image, the model or the GGUF.
 
@@ -178,7 +186,7 @@ Verified: the evaluation run against the containerized embedder gives the same H
 
 | Tool | Wraps | Purpose |
 |---|---|---|
-| `search_plan` | `POST /v1/search` | Hebrew question and/or `areas`, `zone_types`, `entities`, `headings` filters; returns the Hebrew context block with citations and pages |
+| `search_plan` | `POST /v1/search` | Hebrew question and/or `areas`, `zone_types`, `entities`, `headings` filters; returns the Hebrew context block with citations and pages, plus the full RAG response in `structuredContent` |
 | `get_plan_contents` | `GET /v1/contents` | Table of contents, for the wording and ids to use in `headings` |
 | `get_plan_locations` | `GET /v1/locations` | Planning areas, sub-areas, table 5.4 rows and zone types the filters accept |
 | `get_plan_chunk` | `GET /v1/chunk` | One chunk left out of a search result for size, by the `chunk_id` printed in parentheses in its `omitted` line (returned chunks are already in the context in full) |

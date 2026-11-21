@@ -325,15 +325,16 @@ def locate(chunks: pd.DataFrame, index: PageIndex, start_page: int,
             epos = index.find(anchor[-SNIPPET_LENGTHS[0]:], pos)
             if epos < 0:  # nb_changed 2026-11-17: last 30 letters not found: try the last 15 / 8 near the expected end
                 epos, tail_n = _find_short_tail(index, anchor, pos)
-            end = index.page_at(epos) if epos >= 0 else start
             if epos < 0:
                 end_unfound.add(len(spans))  # nb_changed 2026-11-17: no end snippet at all, handled after the loop
-        starts.append(start)
-        ends.append(max(start, end))
         # nb_changed: end offset = end of the last-30-letters snippet when found; when the anchor was too short to
         # search for an end (it matched whole) or the end was not found, the length of the anchor from the start
         # nb_changed 2026-11-17: the length of the snippet that was found (tail_n) instead of always 30
         end_off = epos + len(anchor[-tail_n:]) if epos >= 0 else pos + len(anchor)  # (len(...) because a short anchor is shorter than tail_n)
+        if epos >= 0:
+            end = index.page_at(end_off - 1)
+        starts.append(start)
+        ends.append(max(start, end))
         spans.append((pos, max(end_off, pos + 1)) if pos >= 0 else None)
         anchors.append(anchor)
         exact.append(pos >= 0 and (len(anchor) < SNIPPET_LENGTHS[1] or epos >= 0))
