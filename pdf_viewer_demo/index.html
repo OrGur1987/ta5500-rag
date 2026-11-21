@@ -187,7 +187,7 @@ const vers = () => [1, 2, 3, 4, 5, 6].filter(v => state.boxes.has(v) && state.av
 const regsOf = (c, v) => (v === 1 ? c.regions : v === 2 ? c.regions_v2 : v === 3 ? c.regions_v3 : v === 4 ? c.regions_v4 : v === 5 ? c.regions_v5 : c.regions_v6) || [];
 const shownRegions = c => vers().flatMap(v => regsOf(c, v));
 const regionsOn = (c, p) => shownRegions(c).filter(r => r.pdf_page === p);
-const pageChunks = p => state.byPage.get(p) || [];
+const pageChunks = p => (state.byPage.get(p) || []).filter(c => regionsOn(c, p).length);
 
 // ---- data ----------------------------------------------------------------------------------------------------
 async function load() {
@@ -460,6 +460,7 @@ function setBoxes(k) {
   markBoxButtons();
   if (state.sel) renderChunkPages(state.sel);
   if (state.mode === "all") fillList(pageChunks(state.page), true);
+  if (state.mode === "page") fillList(pageChunks(state.page));
   drawOverlay(); refreshStatus();
   // nb_changed 2026-11-17: the message now names v6 as well; the earlier message is kept commented out
   // if (!vers().length) status("No box version is switched on: use v1 / v2 / v3 / v4 / v5 / all above the PDF");   // (v4, v5 added)

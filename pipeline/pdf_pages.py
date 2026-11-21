@@ -359,6 +359,8 @@ def locate(chunks: pd.DataFrame, index: PageIndex, start_page: int,
         found = [p for sn in _cell_snippets(chunks.iloc[i]["text"], chunks.iloc[i - 1]["text"]) if (p := index.text.rfind(sn, lo, spans[i][0])) >= 0]
         if found:
             spans[i] = (min(found), spans[i][1])
+            starts[i] = index.page_at(spans[i][0])
+            ends[i] = max(starts[i], index.page_at(spans[i][1] - 1))
     # nb_changed 2026-11-17 (box version 6): a chunk whose end was not found with any snippet ends where the NEXT chunk starts,
     # when that chunk is matched and its start is about one chunk length away (60%..140%), since consecutive chunks follow
     # each other in the PDF. Otherwise the old end (start + the chunk's length) stays. These chunks stay flagged as estimated.

@@ -223,6 +223,20 @@ def test_record_after_an_unmatched_chunk_starts_at_its_own_cells_and_the_estimat
     assert regions[1][0]["y1"] <= 50 + PAD_Y + 1e-6
 
 
+def test_record_after_unmatched_chunk_updates_page_bounds_for_cells_on_previous_page():
+    cells_a, cells_c = "אזור ירוק גדול ויפה מאוד", "אזור כחול קטן ומרוחק מאוד"
+    row_a, row_c = _row("רובע אחד > אזור א", cells_a, P1), _row("רובע אחד > אזור ג", cells_c, P3)
+    missing = "[רובע אחד > אזור ב]\nתיאור שלא מופיע במסמך המקור בכלל ולכן לא יימצא"
+    idx = lines_index({4: [cells_a, P1, "אזור ב שורה שאינה מופיעה בטקסט", cells_c], 5: [P3]})
+
+    starts, ends, missed, regions, _ = locate(
+        kinds(("record", row_a), ("record", missing), ("record", row_c)), idx, start_page=4
+    )
+    assert missed == ["c1"]
+    assert (starts[2], ends[2]) == (4, 5)
+    assert [region["page"] for region in regions[2]] == [4, 5]
+
+
 def test_record_does_not_take_the_header_it_shares_with_the_unmatched_chunk_before_it():
     area = "אזור תכנון מערבי גדול"  # the area name: the header of the unmatched area record AND the parent of the row below
     row = _row(f"רובע אחד > {area} > אזור ג", "אזור כחול קטן ומרוחק מאוד", P3)

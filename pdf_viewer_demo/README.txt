@@ -7,6 +7,7 @@ Open http://localhost:8765/   (a browser blocks the PDF and JSON when index.html
 Files: index.html (the page; pdf.js comes from cdnjs, so the browser needs internet access),
        chunks.json (exported from bundle/chunks_seq_num_bbox.parquet), plan.pdf (the PDF the boxes were measured on).
 URL examples: ?mode=seq&v=176  ?mode=page&v=37  ?mode=all&v=37  ?mode=id&v=3.5.4  ?mode=section&v=3.5
+Page lists include chunks with boxes in the currently selected versions.
 
 nb_changed 2026-11-12: two versions of the boxes can be compared.
        chunks_v2.json = version 2 of the boxes (fixed X per page, from bundle/chunks_seq_num_bbox_1.parquet); chunks.json is version 1.
