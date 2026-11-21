@@ -81,7 +81,13 @@ server.registerTool(
       const head = `רמת התאמה: ${r.band_label ?? r.band}`;
       const missingHeadings = r.location?.headings_not_found ?? [];
       const warning = missingHeadings.length ? `כותרות שלא נמצאו בתכנית: ${missingHeadings.join(", ")}\n\n` : "";
-      return ok(`${head}\n\n${warning}${r.context ?? JSON.stringify(r.hits, null, 2)}`);
+      // nb_changed 2026-11-16: the numbered text above does not name the chunk ids, so a client cannot tell which chunks of the
+      // plan PDF were returned. Append one compact, machine-readable line with the ranked hits (array order = rank):
+      // id = chunk_id, p = page_start, s = score. The map app (PDF viewer window) parses it to highlight the chunks.
+      const hitsMarker = Array.isArray(r.hits) && r.hits.length
+        ? `\n\n<!--ta5500-hits:${JSON.stringify(r.hits.map((h) => ({ id: h.chunk_id, p: h.page_start, s: Number(h.score?.toFixed?.(3) ?? h.score) })))}-->`
+        : "";
+      return ok(`${head}\n\n${warning}${r.context ?? JSON.stringify(r.hits, null, 2)}${hitsMarker}`);
     } catch (e) {
       return fail(e);
     }

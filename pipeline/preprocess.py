@@ -62,11 +62,23 @@ def build_chunks(paths: Paths) -> None:
     config.write_parquet(chunks, paths.chunks, {"tokenizer": tokenizer_id, "min_tokens": min_tokens, "max_tokens": max_tokens})
 
 
-def add_pages(pdf: Path, start_page: int, paths: Paths) -> None:
+# nb_changed 2026-11-17: default of x_by_orientation is now True, so add_pages() gives the version 6 boxes (one X pair per
+# page orientation) when called without the flag. Old signature: x_by_orientation: bool = False
+def add_pages(pdf: Path, start_page: int, paths: Paths, x_by_orientation: bool = True) -> None:  # nb_changed 2026-11-17: new flag
     chunks = pd.read_parquet(paths.chunks)
-    chunks["page_start"], chunks["page_end"], missed = locate(chunks, PageIndex(pdf), start_page)
+    index = PageIndex(pdf)  # nb_changed 2026-11-17: kept in a variable so the X ranges can be reported below
+    # nb_changed: locate() also returns `regions` (one PDF box per page of the chunk) and `bbox_exact` (False when the
+    # box is only estimated between the neighbouring matched chunks); both are saved with the chunks.
+    chunks["page_start"], chunks["page_end"], missed, chunks["regions"], chunks["bbox_exact"] = locate(
+        chunks, index, start_page, x_by_orientation)  # nb_changed 2026-11-17: was PageIndex(pdf) and no flag
+    if x_by_orientation and index.words:  # nb_changed 2026-11-17: report the X range per orientation and the pages that set it
+        for o, (x0, p0, x1, p1) in index.words["x_source"].items():
+            print(f"x range {o}: {x0} (PDF page {p0}) to {x1} (PDF page {p1})")
     print(f"pages: {len(chunks)} chunks, unmatched {len(missed)} (inherit the previous page), "
           f"spanning pages {(chunks.page_end > chunks.page_start).sum()}")
+    # nb_changed: report how many boxes are exact, estimated or missing
+    print(f"regions: exact {int(chunks.bbox_exact.sum())}, estimated {int((~chunks.bbox_exact).sum())}, "
+          f"none {int(chunks.regions.map(lambda r: not r).sum())}, over 1 page {int(chunks.regions.map(len).gt(1).sum())}")
     config.write_parquet(chunks, paths.chunks, config.read_meta(paths.chunks))
 
 
@@ -76,6 +88,12 @@ def main() -> None:
     ap.add_argument("pdf", type=Path, help="PDF exported from the docx after accepting tracked changes")
     ap.add_argument("--model", help="registry key in models.yml (default: active)")
     ap.add_argument("--start-page", type=int, default=4, help="printed page of the first body chunk (skips the TOC)")
+    # nb_changed 2026-11-17: box version 3, one X range per page orientation instead of one per page
+    # nb_changed 2026-11-17: now on by default (box version 6); BooleanOptionalAction also gives --no-x-by-orientation to
+    # switch it off (per-page X, version 2 style). Old line, which could only switch it on:
+    # ap.add_argument("--x-by-orientation", action="store_true", help="same X range on all pages of one orientation")
+    ap.add_argument("--x-by-orientation", action=argparse.BooleanOptionalAction, default=True,
+                    help="same X range on all pages of one orientation (default: on; --no-x-by-orientation for per-page X)")
     ap.add_argument("--out-dir", type=Path, default=config.DATA_DIR)
     ap.add_argument("--from", dest="first", choices=STAGES, default=STAGES[0])
     args = ap.parse_args()
@@ -85,7 +103,7 @@ def main() -> None:
         "markdown": lambda: build_markdown(args.docx, paths),
         "tree": lambda: build_tree(paths),
         "chunks": lambda: build_chunks(paths),
-        "pages": lambda: add_pages(args.pdf, args.start_page, paths),
+        "pages": lambda: add_pages(args.pdf, args.start_page, paths, args.x_by_orientation),  # nb_changed 2026-11-17: flag passed on
         "embeddings": lambda: embed_chunks(paths.chunks, paths.embeddings, paths.model),
     }
     for name in STAGES[STAGES.index(args.first):]:
