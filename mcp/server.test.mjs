@@ -14,9 +14,16 @@ test("search returns the RAG data and preserves the text and PDF marker", async 
     hits: [{ chunk_id: "4.3", citation: "4.3", page_start: 65, page_end: 66, score: 0.75 }],
     context: "Plan context",
   };
-  const api = createServer((_req, res) => {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(searchResult));
+  let requestBody;
+  const api = createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      requestBody = JSON.parse(body);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(searchResult));
+    });
   });
   api.listen(0, "127.0.0.1");
   await once(api, "listening");
@@ -31,7 +38,8 @@ test("search returns the RAG data and preserves the text and PDF marker", async 
   const client = new Client({ name: "test-client", version: "1.0.0" });
   try {
     await client.connect(transport);
-    const result = await client.callTool({ name: "search_plan", arguments: { headings: ["4.3"] } });
+    const result = await client.callTool({ name: "search_plan", arguments: { headings: ["4.3"], entity_area_scope: ["703"] } });
+    assert.deepEqual(requestBody.entity_area_scope, ["703"]);
     assert.deepEqual(result.structuredContent, searchResult);
     assert.equal(result.content[0].text, 'רמת התאמה: High\n\nPlan context\n\n<!--ta5500-hits:[{"id":"4.3","p":65,"s":0.75}]-->');
   } finally {

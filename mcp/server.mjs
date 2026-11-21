@@ -55,6 +55,7 @@ server.registerTool(
       areas: z.array(z.string()).optional().describe('Planning-area codes, e.g. "703" or sub-area "101ה".'),
       zone_types: z.array(z.string()).optional().describe('Zone-type ids like "3.3.5", category ids like "3.3", or zone names.'),
       entities: z.array(z.string()).optional().describe('Rows of table 5.4: street/special-space code like "ר-83", or a label.'),
+      entity_area_scope: z.array(z.string()).min(1).optional().describe("Planning areas intersected by the selected polygon. Set by the client application, not the model; restricts entity rows to those areas."),
       headings: z.array(z.string()).optional().describe('Chapters/sections by number ("4.3"), clause id ("4.7.1(ג)") or full title; see get_plan_contents.'),
       focus_notes: z
         .array(z.object({
@@ -68,7 +69,7 @@ server.registerTool(
         .describe("Set by the client application from the user's map selection; do not fill in."),
     },
   },
-  async ({ question, areas, zone_types, entities, headings, focus_notes }) => {
+  async ({ question, areas, zone_types, entities, headings, focus_notes, entity_area_scope }) => {
     const hasFilter = [areas, zone_types, entities, headings].some((v) => v?.length);
     if (!question?.trim() && !hasFilter) {
       return { isError: true, content: [{ type: "text", text: "יש לציין שאלה או לפחות מסנן אחד (areas, zone_types, entities, headings)." }] };
@@ -76,7 +77,7 @@ server.registerTool(
     try {
       const r = await call("/v1/search", {
         method: "POST",
-        body: { question, areas, zone_types, entities, headings, focus_notes, context: true },
+        body: { question, areas, zone_types, entities, headings, focus_notes, entity_area_scope, context: true },
       });
       const head = `רמת התאמה: ${r.band_label ?? r.band}`;
       const missingHeadings = r.location?.headings_not_found ?? [];

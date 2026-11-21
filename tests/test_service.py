@@ -58,6 +58,16 @@ def test_a_request_with_neither_question_nor_filters_is_rejected(client):
     coded = client.post("/v1/search", json={"question": "שאלה", "focus_notes": [{**note, "code": "382"}]}).json()
     assert coded["focus_more"] == [] and any(h["via"] == "focus_note" for h in coded["hits"])
 
+def test_entity_area_scope_is_applied_and_confirmed(client):
+    body = client.post("/v1/search", json={
+        "areas": ["703"], "entities": ["ר-83"], "entity_area_scope": ["703"],
+    }).json()
+    ids = {hit["chunk_id"] for hit in body["hits"]}
+    assert body["entity_area_scope"] == ["703"]
+    assert "5.4[4]" in ids and "5.4[5]" not in ids
+    assert client.post("/v1/search", json={"entities": ["ר-83"], "entity_area_scope": []}).status_code == 422
+    assert client.post("/v1/search", json={"entities": ["ר-83"], "entity_area_scope": ["not an area"]}).status_code == 422
+
 
 def test_api_key_is_required_when_configured(ret, monkeypatch):
     monkeypatch.setenv("RAG_API_KEY", "secret")
