@@ -52,6 +52,9 @@ class SearchRequest(BaseModel):
                           "(a street name, a symbol, a zone-type row). They narrow the requested areas to their own rows and "
                           "are returned even when no area is given. An empty list counts as not given.",
         examples=[["ר-83"], ["101ה", "ר-12"]])
+    entity_area_scope: list[str] | None = Field(
+        None, min_length=1, description="For a polygon search, restrict entity rows to these intersected planning areas. "
+                                        "Without it, entity rows from all areas remain eligible.")
     headings: list[str] | None = Field(
         None, description="Chapters and sections of the plan by number ('4', '4.3', 'סעיף 4.3') or by full title. A small heading "
                           "returns all its chunks; a large one its own chunk and a few more (without a question, the first ones in "
@@ -128,6 +131,7 @@ class SearchResponse(BaseModel):
     band: str = Field(description="Match level: high, medium or low.")
     band_label: str = Field(description="`band` in Hebrew.")
     top_score: float
+    entity_area_scope: list[str] | None = Field(None, description="The entity-area scope applied to this search, if supplied.")
     location: Location
     hits: list[Hit]
     omitted: list[Omitted] = Field(
@@ -232,7 +236,7 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
         ret: Retriever = app.state.retriever
         try:
             result = ret.search(req.question, req.areas or None, req.zone_types or None, req.entities or None, req.headings or None,
-                                [n.model_dump() for n in req.focus_notes or []] or None)
+                                [n.model_dump() for n in req.focus_notes or []] or None, entity_area_scope=req.entity_area_scope)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         except EmbeddingError as e:
@@ -244,7 +248,7 @@ def create_app(retriever: Retriever | None = None) -> FastAPI:
                 **_chunk_fields(ret, h["chunk_id"]), score=h["score"], via=h["via"], reason=h["reason"],
                 followed_from=ret.citation(source) if source else None, mandatory=h.get("mandatory")))
         return SearchResponse(
-            band=result.band, band_label=result.band_label, top_score=result.top_score,
+            band=result.band, band_label=result.band_label, top_score=result.top_score, entity_area_scope=req.entity_area_scope,
             location=Location(**{k: result.location[k] for k in Location.model_fields}), hits=hits,
             omitted=result.omitted, context=ret.context(result) if req.context else None, focus_more=result.focus_more)
 

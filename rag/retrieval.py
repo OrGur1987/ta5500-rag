@@ -425,12 +425,19 @@ class Retriever:
         return pd.Series(self.matrix @ q, index=self.chunks.index)
 
     def search(self, query: str | None = None, areas: list[str] | None = None, zone_types: list[str] | None = None,
-               entities: list[str] | None = None, headings: list[str] | None = None, focus_notes: list[dict] | None = None) -> Result:
+               entities: list[str] | None = None, headings: list[str] | None = None, focus_notes: list[dict] | None = None,
+               entity_area_scope: list[str] | None = None) -> Result:
         """Without a question, filters alone are searched with the generic question (a plan border from the GIS).
 
         A zone scope too large to return whole is cut to its most similar chunks, unless there is no question to rank by.
         `focus_notes` (text, layer, code, priority, weight) bring in plan text for the other map layers after all other hits.
         """
+        if entity_area_scope is not None:
+            if not entity_area_scope or any(not AREA_VALUE.fullmatch(PUNCT.sub("", str(value))) for value in entity_area_scope):
+                raise ValueError("entity_area_scope requires valid planning-area codes")
+            entity_areas = {parse_area(value)[0] for value in entity_area_scope}
+        else:
+            entity_areas = None
         filter_only = not query
         if filter_only:
             if areas is None and zone_types is None and entities is None and headings is None:
@@ -442,6 +449,8 @@ class Retriever:
         hits: dict[str, dict] = {}
 
         def add(cid: str, via: str, **why) -> None:
+            if entity_areas is not None and cid in loc["entity_records"] and self.chunks.at[cid, "area"] not in entity_areas:
+                return
             if cid not in hits:
                 row = self.chunks.loc[cid]
                 hits[cid] = {"chunk_id": cid, "citation": self.citation(cid), "score": float(scores[cid]), "via": via,
@@ -464,7 +473,7 @@ class Retriever:
                 add(cid, "heading")
         for cid in [] if filter_only else scores[~self.plan_record].nlargest(cfg["clause_k"]).index:
             add(cid, "search")
-        self._add_records(add, scores, loc, ranked=not filter_only)
+        self._add_records(add, scores, loc, ranked=not filter_only, entity_areas=entity_areas)
 
         top = max((h["score"] for h in hits.values()), default=0.0)
         self._add_table_notes(hits, add)
@@ -493,7 +502,8 @@ class Retriever:
         band = "high" if structural else next(b for b in ("high", "medium", "low") if b == "low" or top >= cfg["bands"][b])
         return Result(ordered, loc, top, band, config.LABELS["band"][band], omitted, more)
 
-    def _add_records(self, add, scores: pd.Series, loc: dict, ranked: bool = True) -> None:
+    def _add_records(self, add, scores: pd.Series, loc: dict, ranked: bool = True,
+                     entity_areas: set[str] | None = None) -> None:
         """Table 5.4 records: per planning area the rows it names, those of the requested zone types, else the most similar ones.
 
         Requested sub-areas and entities (`loc["entity_records"]`) name rows of an area; they are always returned,
@@ -502,11 +512,12 @@ class Retriever:
         when there is no question, so similarity picks nothing: the area's whole table stands in for the zone-type rows.
         """
         cfg = self.cfg
-        forced = loc["entity_records"]
+        forced = [cid for cid in loc["entity_records"]
+                  if entity_areas is None or self.chunks.at[cid, "area"] in entity_areas]
         if not loc["areas"]:
             for cid in forced:
                 add(cid, "location")
-            if not forced and ranked:
+            if not forced and ranked and entity_areas is None:
                 for cid in scores[self.plan_record].nlargest(cfg["records_k_global"]).index:
                     add(cid, "search")
             return

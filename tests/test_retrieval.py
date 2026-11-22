@@ -137,6 +137,23 @@ def test_entity_filters_name_table_rows_by_code_or_label(tmp_path, monkeypatch):
     assert config.LABELS["context"]["entities_missing"] in ret.context(alone)
 
 
+def test_polygon_entity_scope_keeps_only_rows_in_selected_areas(tmp_path, monkeypatch):
+    ret = make(tmp_path, monkeypatch, {"3.3.5": 1})
+    unscoped = via(ret.search(areas=["703"], entities=["ר-83"]))
+    assert {"5.4[4]", "5.4[5]"} <= set(unscoped)
+
+    scoped = via(ret.search(areas=["703"], entities=["ר-83"], entity_area_scope=["703"]))
+    assert "5.4[4]" in scoped and "5.4[5]" not in scoped
+    both = via(ret.search(areas=["703", "502"], entities=["ר-83"], entity_area_scope=["703", "502"]))
+    assert {"5.4[4]", "5.4[5]"} <= set(both)
+    unmatched = via(ret.search("שאלה", entities=["ר-83"], entity_area_scope=["999"]))
+    assert "5.4[4]" not in unmatched and "5.4[5]" not in unmatched
+    overridden = via(ret.search(areas=["502"], entities=["ר-83"], entity_area_scope=["703"]))
+    assert "5.4[5]" not in overridden
+    with pytest.raises(ValueError):
+        ret.search(entities=["ר-83"], entity_area_scope=[])
+
+
 def test_a_row_label_matches_as_a_phrase_and_is_found_in_free_text(tmp_path, monkeypatch):
     ret = make(tmp_path, monkeypatch, {"3.3.5": 1})
     assert ret.resolve_entity("מרקם בנוי לשימור") == ["5.4[6]", "5.4[7]"]  # the exact label and the one inside a longer label
